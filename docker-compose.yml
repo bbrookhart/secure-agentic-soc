@@ -1,0 +1,109 @@
+# Agentic SOC -- local stack.
+#
+#   docker compose up --build
+#   docker compose exec soc-app python -m src.run_cli --alert alert-001-ransomware --approve
+#
+# Security posture of this compose file (each setting is a deliberate control,
+# not boilerplate):
+#
+#   * the app container has NO published ports other than the UI, and the model
+#     server is not exposed to the host network at all;
+#   * the application filesystem is read-only; only the state volume is
+#     writable, so a compromised process cannot rewrite its own code;
+#   * all Linux capabilities are dropped and privilege escalation is blocked;
+#   * resource limits bound the damage a runaway agent loop can do;
+#   * the app runs as an unprivileged user (set in the Dockerfile).
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: soc-ollama
+    # Not published to the host: only the app container can reach the model
+    # server, over the internal bridge network.
+    expose:
+      - "11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    networks:
+      - soc-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+
+  # One-shot job: pull the models the app needs, then exit.
+  model-init:
+    image: ollama/ollama:latest
+    container_name: soc-model-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Pulling chat model (llama3.2)..." &&
+        ollama pull llama3.2 &&
+        echo "Pulling embedding model (nomic-embed-text)..." &&
+        ollama pull nomic-embed-text &&
+        echo "Models ready."
+    networks:
+      - soc-net
+    restart: "no"
+
+  soc-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: soc-app
+    depends_on:
+      model-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8501:8501"   # bound to loopback, not 0.0.0.0
+    environment:
+      SOC_OLLAMA_BASE_URL: http://ollama:11434
+      SOC_OLLAMA_MODEL: ${SOC_OLLAMA_MODEL:-llama3.2}
+      SOC_EMBEDDING_BACKEND: ${SOC_EMBEDDING_BACKEND:-tfidf}
+      SOC_OFFLINE_MODE: ${SOC_OFFLINE_MODE:-false}
+      SOC_HITL_SEVERITY_THRESHOLD: ${SOC_HITL_SEVERITY_THRESHOLD:-high}
+      SOC_DATA_DIR: /app/data
+      SOC_STATE_DIR: /app/state
+      SOC_CHECKPOINT_DB: /app/state/checkpoints.sqlite
+      SOC_AUDIT_LOG_PATH: /app/state/audit/audit.jsonl
+      SOC_CHROMA_DIR: /app/state/chroma
+    volumes:
+      - soc-state:/app/state
+    networks:
+      - soc-net
+    restart: unless-stopped
+
+    # --- Hardening -------------------------------------------------------
+    read_only: true                 # application code cannot be modified at runtime
+    tmpfs:
+      - /tmp:size=128m,mode=1777    # scratch space, wiped on restart
+    security_opt:
+      - no-new-privileges:true      # blocks setuid privilege escalation
+    cap_drop:
+      - ALL                         # the app needs no Linux capabilities
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+
+networks:
+  soc-net:
+    driver: bridge
+
+volumes:
+  ollama-models:
+  soc-state:

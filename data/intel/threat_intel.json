@@ -1,0 +1,163 @@
+{
+  "_meta": {
+    "description": "Offline, synthetic threat-intelligence corpus backing the enrich_ioc tool. Contains NO real indicators; every value uses documentation/reserved ranges or fictional domains.",
+    "warning": "Synthetic data for demonstration only. Do not use for production detection.",
+    "generated": "2026-01-15"
+  },
+  "indicators": [
+    {
+      "indicator": "203.0.113.45",
+      "indicator_type": "ipv4",
+      "known_malicious": true,
+      "reputation_score": 92,
+      "threat_names": ["Cobalt Strike C2", "TA-SIM-041"],
+      "first_seen": "2025-11-02",
+      "last_seen": "2026-01-12",
+      "sources": ["internal-ti", "sim-feed-alpha"],
+      "notes": "Hosted Cobalt Strike team server on 443 with default malleable profile. Documentation range (RFC 5737) used for simulation."
+    },
+    {
+      "indicator": "198.51.100.77",
+      "indicator_type": "ipv4",
+      "known_malicious": true,
+      "reputation_score": 78,
+      "threat_names": ["Password spray infrastructure"],
+      "first_seen": "2025-12-20",
+      "last_seen": "2026-01-14",
+      "sources": ["internal-ti"],
+      "notes": "Observed spraying M365 tenants from a residential proxy pool. Documentation range (RFC 5737)."
+    },
+    {
+      "indicator": "192.0.2.199",
+      "indicator_type": "ipv4",
+      "known_malicious": false,
+      "reputation_score": 12,
+      "threat_names": [],
+      "first_seen": "2024-06-01",
+      "last_seen": "2026-01-15",
+      "sources": ["asset-inventory"],
+      "notes": "Known corporate VPN egress address. Benign; frequently triggers impossible-travel false positives."
+    },
+    {
+      "indicator": "203.0.113.201",
+      "indicator_type": "ipv4",
+      "known_malicious": true,
+      "reputation_score": 85,
+      "threat_names": ["Exfiltration staging host"],
+      "first_seen": "2026-01-05",
+      "last_seen": "2026-01-13",
+      "sources": ["sim-feed-alpha"],
+      "notes": "Received large multipart uploads from several victim networks."
+    },
+    {
+      "indicator": "cdn-update-service.example",
+      "indicator_type": "domain",
+      "known_malicious": true,
+      "reputation_score": 88,
+      "threat_names": ["TA-SIM-041", "Fake updater C2"],
+      "first_seen": "2025-10-28",
+      "last_seen": "2026-01-12",
+      "sources": ["internal-ti", "passive-dns-sim"],
+      "notes": "Registered 4 days before first use; masquerades as a CDN update endpoint. Beacons every 60s with 10% jitter."
+    },
+    {
+      "indicator": "sso-login-verify.example",
+      "indicator_type": "domain",
+      "known_malicious": true,
+      "reputation_score": 90,
+      "threat_names": ["Credential harvesting kit 'EvilProxy-sim'"],
+      "first_seen": "2026-01-08",
+      "last_seen": "2026-01-14",
+      "sources": ["sim-feed-alpha"],
+      "notes": "Reverse-proxy phishing kit capable of relaying MFA. Typosquats the corporate SSO portal."
+    },
+    {
+      "indicator": "updates.contoso-cdn.example",
+      "indicator_type": "domain",
+      "known_malicious": false,
+      "reputation_score": 5,
+      "threat_names": [],
+      "first_seen": "2021-03-14",
+      "last_seen": "2026-01-15",
+      "sources": ["asset-inventory"],
+      "notes": "Sanctioned internal software distribution endpoint. Benign."
+    },
+    {
+      "indicator": "backup-sync.example",
+      "indicator_type": "domain",
+      "known_malicious": true,
+      "reputation_score": 71,
+      "threat_names": ["Data staging"],
+      "first_seen": "2026-01-03",
+      "last_seen": "2026-01-13",
+      "sources": ["internal-ti"],
+      "notes": "Consumer file-sync service abused for exfiltration in recent simulated intrusions."
+    },
+    {
+      "indicator": "https://sso-login-verify.example/auth/o365",
+      "indicator_type": "url",
+      "known_malicious": true,
+      "reputation_score": 94,
+      "threat_names": ["Credential harvesting kit 'EvilProxy-sim'"],
+      "first_seen": "2026-01-08",
+      "last_seen": "2026-01-14",
+      "sources": ["sim-feed-alpha"],
+      "notes": "Landing page clones the corporate SSO login and relays credentials plus session cookies."
+    },
+    {
+      "indicator": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "indicator_type": "sha256",
+      "known_malicious": false,
+      "reputation_score": 0,
+      "threat_names": [],
+      "first_seen": "2020-01-01",
+      "last_seen": "2026-01-15",
+      "sources": ["hash-registry"],
+      "notes": "Truncated well-known empty-file digest used as a benign control value in tests."
+    },
+    {
+      "indicator": "9f2c8b1e4d7a6035f1c2b8e9d4a7ف",
+      "indicator_type": "sha256",
+      "known_malicious": false,
+      "reputation_score": 0,
+      "threat_names": [],
+      "first_seen": "2026-01-01",
+      "last_seen": "2026-01-01",
+      "sources": [],
+      "notes": "Deliberately malformed entry retained to exercise input validation paths."
+    },
+    {
+      "indicator": "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3c1f9d2e8b7a6c5d4e3f21098",
+      "indicator_type": "sha256",
+      "known_malicious": true,
+      "reputation_score": 96,
+      "threat_names": ["SimLocker ransomware", "TA-SIM-118"],
+      "first_seen": "2026-01-09",
+      "last_seen": "2026-01-14",
+      "sources": ["internal-ti", "sandbox-sim"],
+      "notes": "Ransomware payload. Deletes volume shadow copies then encrypts with .simlock extension."
+    },
+    {
+      "indicator": "5d41402abc4b2a76b9719d911017c592",
+      "indicator_type": "md5",
+      "known_malicious": true,
+      "reputation_score": 74,
+      "threat_names": ["Loader stage-1 'SimDropper'"],
+      "first_seen": "2025-12-11",
+      "last_seen": "2026-01-10",
+      "sources": ["sandbox-sim"],
+      "notes": "Macro-enabled document dropper that fetches stage 2 over HTTPS."
+    },
+    {
+      "indicator": "hr-benefits@sso-login-verify.example",
+      "indicator_type": "email",
+      "known_malicious": true,
+      "reputation_score": 87,
+      "threat_names": ["Credential harvesting kit 'EvilProxy-sim'"],
+      "first_seen": "2026-01-08",
+      "last_seen": "2026-01-14",
+      "sources": ["mail-gateway-sim"],
+      "notes": "Sender address used in an HR-themed credential phishing campaign."
+    }
+  ]
+}

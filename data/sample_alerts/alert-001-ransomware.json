@@ -1,0 +1,49 @@
+{
+  "alert_id": "ALRT-2026-0112-001",
+  "source": "EDR",
+  "title": "Mass file encryption and shadow copy deletion on file server",
+  "description": "EDR observed simlock.exe renaming 14,211 files to the .simlock extension on SRV-FILE-02 over 96 seconds, immediately preceded by 'vssadmin delete shadows /all /quiet' and the Windows Defender service entering a stopped state. A ransom note (READ_ME_RECOVERY.txt) was written to the Finance share. Initial access appears to trace back to workstation WKS-4417, where Outlook spawned an encoded PowerShell command earlier the same morning.",
+  "detected_at": "2026-01-12T08:34:02Z",
+  "reported_severity": "critical",
+  "assets": [
+    {
+      "name": "SRV-FILE-02",
+      "asset_type": "host",
+      "ip_address": "10.30.2.11",
+      "criticality": "critical",
+      "owner": "Infrastructure"
+    },
+    {
+      "name": "WKS-4417",
+      "asset_type": "host",
+      "ip_address": "10.20.4.17",
+      "criticality": "standard",
+      "owner": "j.rivera"
+    }
+  ],
+  "indicators": [
+    {
+      "value": "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3c1f9d2e8b7a6c5d4e3f21098",
+      "indicator_type": "sha256",
+      "context": "Hash of simlock.exe observed encrypting the Finance share"
+    },
+    {
+      "value": "203.0.113.45",
+      "indicator_type": "ipv4",
+      "context": "Outbound destination contacted by both WKS-4417 and SRV-FILE-02"
+    },
+    {
+      "value": "cdn-update-service.example",
+      "indicator_type": "domain",
+      "context": "Domain resolved prior to stage-2 payload download"
+    }
+  ],
+  "raw_event": {
+    "detection_rule": "EDR-BEHAV-RANSOM-004",
+    "process": "simlock.exe",
+    "files_modified": 14211,
+    "shadow_copies_deleted": true,
+    "defender_service_state": "stopped",
+    "user_context": "CORP\\j.rivera"
+  }
+}

@@ -1,0 +1,281 @@
+{
+  "_meta": {
+    "description": "Curated offline subset of the MITRE ATT&CK Enterprise matrix used for local technique mapping. Not a complete copy of ATT&CK.",
+    "attack_version_reference": "v14",
+    "source": "https://attack.mitre.org/",
+    "license_note": "MITRE ATT&CK is a registered trademark of The MITRE Corporation. Content is summarised here for offline demonstration under the ATT&CK Terms of Use.",
+    "technique_count": 30
+  },
+  "techniques": [
+    {
+      "technique_id": "T1566",
+      "name": "Phishing",
+      "tactic": "Initial Access",
+      "description": "Adversaries send phishing messages to gain access to victim systems, typically with malicious attachments or links.",
+      "keywords": ["phishing", "email", "attachment", "lure", "spoofed sender", "malicious link", "credential harvest"],
+      "detection": "Inspect email gateway logs for anomalous senders, newly registered domains and attachment types not typical for the organisation.",
+      "mitigations": ["User training", "Attachment sandboxing", "DMARC/SPF/DKIM enforcement"]
+    },
+    {
+      "technique_id": "T1566.001",
+      "name": "Phishing: Spearphishing Attachment",
+      "tactic": "Initial Access",
+      "description": "Adversaries send targeted emails containing malicious attachments to execute code on victim systems.",
+      "keywords": ["spearphishing", "attachment", "macro", "docm", "xlsm", "invoice.doc", "zip attachment"],
+      "detection": "Alert on Office applications spawning script interpreters shortly after an email delivery event.",
+      "mitigations": ["Disable Office macros from the internet", "Attachment detonation"]
+    },
+    {
+      "technique_id": "T1566.002",
+      "name": "Phishing: Spearphishing Link",
+      "tactic": "Initial Access",
+      "description": "Adversaries send targeted emails containing links to credential-harvesting or malware-delivery sites.",
+      "keywords": ["phishing link", "credential harvesting", "fake login", "typosquat", "url redirect", "o365 login"],
+      "detection": "Correlate proxy logs against newly registered or low-reputation domains referenced in inbound mail.",
+      "mitigations": ["URL rewriting", "Web filtering", "Phishing-resistant MFA"]
+    },
+    {
+      "technique_id": "T1078",
+      "name": "Valid Accounts",
+      "tactic": "Defense Evasion, Persistence, Privilege Escalation, Initial Access",
+      "description": "Adversaries obtain and abuse credentials of existing accounts to blend in with legitimate activity.",
+      "keywords": ["valid account", "compromised credentials", "impossible travel", "unusual login", "legitimate account", "stolen password"],
+      "detection": "Baseline per-user logon geography, device and time-of-day; alert on deviations and on service accounts logging in interactively.",
+      "mitigations": ["MFA", "Conditional access", "Privileged account separation"]
+    },
+    {
+      "technique_id": "T1110",
+      "name": "Brute Force",
+      "tactic": "Credential Access",
+      "description": "Adversaries systematically guess credentials to gain account access.",
+      "keywords": ["brute force", "failed login", "authentication failure", "many attempts", "4625", "password spray", "lockout"],
+      "detection": "Threshold and velocity rules on failed authentication events per source IP and per account.",
+      "mitigations": ["Account lockout", "MFA", "Rate limiting"]
+    },
+    {
+      "technique_id": "T1110.003",
+      "name": "Brute Force: Password Spraying",
+      "tactic": "Credential Access",
+      "description": "Adversaries try a small number of common passwords against many accounts to avoid lockouts.",
+      "keywords": ["password spray", "many accounts", "single password", "low and slow", "spray"],
+      "detection": "Alert on a single source authenticating against an unusually high number of distinct accounts.",
+      "mitigations": ["MFA", "Banned password lists", "Smart lockout"]
+    },
+    {
+      "technique_id": "T1059",
+      "name": "Command and Scripting Interpreter",
+      "tactic": "Execution",
+      "description": "Adversaries abuse command and script interpreters to execute commands, scripts or binaries.",
+      "keywords": ["command line", "script", "interpreter", "cmd.exe", "bash", "execution"],
+      "detection": "Monitor process creation events for interpreters spawned by unusual parents.",
+      "mitigations": ["Application control", "Script block logging"]
+    },
+    {
+      "technique_id": "T1059.001",
+      "name": "Command and Scripting Interpreter: PowerShell",
+      "tactic": "Execution",
+      "description": "Adversaries abuse PowerShell to execute commands and payloads, frequently with encoded arguments.",
+      "keywords": ["powershell", "encodedcommand", "-enc", "invoke-expression", "iex", "downloadstring", "bypass", "hidden window"],
+      "detection": "Enable script block logging; alert on -EncodedCommand, -ExecutionPolicy Bypass and hidden window styles.",
+      "mitigations": ["Constrained language mode", "PowerShell v2 removal", "AMSI"]
+    },
+    {
+      "technique_id": "T1053.005",
+      "name": "Scheduled Task/Job: Scheduled Task",
+      "tactic": "Persistence, Privilege Escalation, Execution",
+      "description": "Adversaries create scheduled tasks to execute payloads on a schedule or at startup.",
+      "keywords": ["scheduled task", "schtasks", "at.exe", "task scheduler", "persistence", "autorun"],
+      "detection": "Monitor 4698 task-creation events and schtasks.exe command lines referencing user-writable paths.",
+      "mitigations": ["Restrict task creation privileges", "Audit task changes"]
+    },
+    {
+      "technique_id": "T1547.001",
+      "name": "Boot or Logon Autostart Execution: Registry Run Keys",
+      "tactic": "Persistence, Privilege Escalation",
+      "description": "Adversaries add programs to registry run keys so they execute when a user logs on.",
+      "keywords": ["run key", "registry", "hkcu\\software\\microsoft\\windows\\currentversion\\run", "autostart", "startup folder"],
+      "detection": "Alert on writes to Run/RunOnce keys referencing executables in temp or user profile directories.",
+      "mitigations": ["Application control", "Registry auditing"]
+    },
+    {
+      "technique_id": "T1003",
+      "name": "OS Credential Dumping",
+      "tactic": "Credential Access",
+      "description": "Adversaries dump credential material from the operating system to enable lateral movement.",
+      "keywords": ["credential dump", "lsass", "mimikatz", "sam", "ntds.dit", "sekurlsa", "procdump"],
+      "detection": "Alert on handle access to lsass.exe by non-standard processes and on ntds.dit copies.",
+      "mitigations": ["Credential Guard", "LSA protection", "Attack surface reduction rules"]
+    },
+    {
+      "technique_id": "T1003.001",
+      "name": "OS Credential Dumping: LSASS Memory",
+      "tactic": "Credential Access",
+      "description": "Adversaries access LSASS process memory to extract credentials.",
+      "keywords": ["lsass", "lsass.exe", "process memory", "minidump", "comsvcs.dll", "procdump lsass"],
+      "detection": "EDR rules on cross-process handle requests to lsass.exe with read-memory rights.",
+      "mitigations": ["Credential Guard", "PPL for LSASS"]
+    },
+    {
+      "technique_id": "T1021",
+      "name": "Remote Services",
+      "tactic": "Lateral Movement",
+      "description": "Adversaries use valid accounts to log into remote services and move laterally.",
+      "keywords": ["remote service", "lateral movement", "remote login", "pivot"],
+      "detection": "Correlate authentication events across hosts for the same account in short time windows.",
+      "mitigations": ["Network segmentation", "Just-in-time admin access"]
+    },
+    {
+      "technique_id": "T1021.001",
+      "name": "Remote Services: Remote Desktop Protocol",
+      "tactic": "Lateral Movement",
+      "description": "Adversaries use RDP to log into and control remote systems.",
+      "keywords": ["rdp", "remote desktop", "3389", "mstsc", "terminal services", "logon type 10"],
+      "detection": "Alert on RDP logons from workstations to servers and on internet-exposed 3389.",
+      "mitigations": ["Network segmentation", "RDP gateway", "MFA"]
+    },
+    {
+      "technique_id": "T1021.002",
+      "name": "Remote Services: SMB/Windows Admin Shares",
+      "tactic": "Lateral Movement",
+      "description": "Adversaries use SMB admin shares (C$, ADMIN$) to move laterally and stage payloads.",
+      "keywords": ["smb", "admin share", "c$", "admin$", "psexec", "445", "net use"],
+      "detection": "Monitor 5140/5145 share access events for administrative shares from non-admin hosts.",
+      "mitigations": ["Disable admin shares where possible", "Segmentation"]
+    },
+    {
+      "technique_id": "T1071.001",
+      "name": "Application Layer Protocol: Web Protocols",
+      "tactic": "Command and Control",
+      "description": "Adversaries communicate with C2 infrastructure over HTTP/S to blend with normal traffic.",
+      "keywords": ["http beacon", "c2", "command and control", "user-agent", "https callback", "web traffic", "post request"],
+      "detection": "Detect periodic beaconing (low jitter), rare user-agents and long-lived connections to new domains.",
+      "mitigations": ["TLS inspection", "Proxy allowlisting", "Egress filtering"]
+    },
+    {
+      "technique_id": "T1071.004",
+      "name": "Application Layer Protocol: DNS",
+      "tactic": "Command and Control",
+      "description": "Adversaries use DNS queries for C2 communication or data transfer.",
+      "keywords": ["dns tunnel", "txt record", "dns query", "long subdomain", "nxdomain", "dns exfil"],
+      "detection": "Alert on high-entropy or unusually long subdomains and high query volume to a single domain.",
+      "mitigations": ["DNS filtering", "Internal resolver enforcement"]
+    },
+    {
+      "technique_id": "T1105",
+      "name": "Ingress Tool Transfer",
+      "tactic": "Command and Control",
+      "description": "Adversaries transfer tools or files from an external system into a compromised environment.",
+      "keywords": ["download", "curl", "wget", "certutil", "bitsadmin", "tool transfer", "payload download"],
+      "detection": "Monitor for LOLBins performing network downloads to user-writable paths.",
+      "mitigations": ["Application control", "Egress filtering"]
+    },
+    {
+      "technique_id": "T1041",
+      "name": "Exfiltration Over C2 Channel",
+      "tactic": "Exfiltration",
+      "description": "Adversaries steal data by exfiltrating it over an existing command and control channel.",
+      "keywords": ["exfiltration", "data transfer", "upload", "large post", "outbound volume", "exfil"],
+      "detection": "Baseline per-host outbound byte volume; alert on statistical outliers to rare destinations.",
+      "mitigations": ["DLP", "Egress filtering", "Network segmentation"]
+    },
+    {
+      "technique_id": "T1567.002",
+      "name": "Exfiltration Over Web Service: Cloud Storage",
+      "tactic": "Exfiltration",
+      "description": "Adversaries exfiltrate data to cloud storage services to blend with legitimate traffic.",
+      "keywords": ["cloud storage", "dropbox", "mega.nz", "google drive upload", "s3 upload", "file sharing"],
+      "detection": "Alert on unusual upload volume to consumer file-sharing services from server subnets.",
+      "mitigations": ["CASB policy", "Block unsanctioned storage"]
+    },
+    {
+      "technique_id": "T1486",
+      "name": "Data Encrypted for Impact",
+      "tactic": "Impact",
+      "description": "Adversaries encrypt data on target systems to interrupt availability, i.e. ransomware.",
+      "keywords": ["ransomware", "encrypt", "ransom note", "readme.txt", "file extension change", "mass file write", "locked files"],
+      "detection": "Detect rapid mass file modification, shadow copy deletion and ransom-note creation.",
+      "mitigations": ["Offline backups", "Behavioural ransomware protection", "Least privilege"]
+    },
+    {
+      "technique_id": "T1490",
+      "name": "Inhibit System Recovery",
+      "tactic": "Impact",
+      "description": "Adversaries delete backups and shadow copies to prevent recovery.",
+      "keywords": ["vssadmin", "shadow copy", "delete shadows", "wbadmin", "bcdedit", "recovery disabled", "backup deletion"],
+      "detection": "Alert on vssadmin delete shadows, wbadmin delete catalog and bcdedit recovery changes.",
+      "mitigations": ["Immutable backups", "Restrict admin utilities"]
+    },
+    {
+      "technique_id": "T1055",
+      "name": "Process Injection",
+      "tactic": "Defense Evasion, Privilege Escalation",
+      "description": "Adversaries inject code into live processes to evade defences and elevate privileges.",
+      "keywords": ["process injection", "createremotethread", "hollowing", "reflective dll", "writeprocessmemory"],
+      "detection": "EDR telemetry on cross-process memory writes and remote thread creation.",
+      "mitigations": ["Attack surface reduction", "Behavioural EDR"]
+    },
+    {
+      "technique_id": "T1112",
+      "name": "Modify Registry",
+      "tactic": "Defense Evasion",
+      "description": "Adversaries modify the registry to hide configuration, disable security tooling or persist.",
+      "keywords": ["registry modification", "reg add", "disable defender", "tamper protection", "registry key change"],
+      "detection": "Audit changes to security-product and policy registry keys.",
+      "mitigations": ["Tamper protection", "Registry auditing"]
+    },
+    {
+      "technique_id": "T1562.001",
+      "name": "Impair Defenses: Disable or Modify Tools",
+      "tactic": "Defense Evasion",
+      "description": "Adversaries disable security tooling to avoid detection.",
+      "keywords": ["disable antivirus", "stop service", "defender exclusion", "uninstall edr", "set-mppreference", "impair defenses"],
+      "detection": "Alert on security service stops, AV exclusion additions and agent uninstall events.",
+      "mitigations": ["Tamper protection", "Alert on agent health loss"]
+    },
+    {
+      "technique_id": "T1136.001",
+      "name": "Create Account: Local Account",
+      "tactic": "Persistence",
+      "description": "Adversaries create local accounts to maintain access.",
+      "keywords": ["net user add", "new account", "local account created", "4720", "account creation"],
+      "detection": "Alert on 4720/4732 events outside change windows, especially additions to local administrators.",
+      "mitigations": ["Restrict account creation", "Privileged access management"]
+    },
+    {
+      "technique_id": "T1087",
+      "name": "Account Discovery",
+      "tactic": "Discovery",
+      "description": "Adversaries enumerate accounts to understand the environment and plan movement.",
+      "keywords": ["net user", "net group", "account discovery", "enumerate users", "domain admins", "whoami /groups"],
+      "detection": "Alert on discovery command bursts from a single host or user session.",
+      "mitigations": ["Restrict enumeration", "Honeytoken accounts"]
+    },
+    {
+      "technique_id": "T1018",
+      "name": "Remote System Discovery",
+      "tactic": "Discovery",
+      "description": "Adversaries enumerate remote hosts to identify lateral movement targets.",
+      "keywords": ["net view", "ping sweep", "port scan", "nmap", "remote system discovery", "arp -a", "network scan"],
+      "detection": "Detect scanning behaviour: many distinct destination IPs or ports from one internal source.",
+      "mitigations": ["Network segmentation", "IDS coverage"]
+    },
+    {
+      "technique_id": "T1190",
+      "name": "Exploit Public-Facing Application",
+      "tactic": "Initial Access",
+      "description": "Adversaries exploit internet-facing applications to gain initial access.",
+      "keywords": ["exploit", "web shell", "sql injection", "public facing", "cve", "vulnerability", "path traversal", "rce"],
+      "detection": "WAF alerts correlated with anomalous child processes from web server accounts.",
+      "mitigations": ["Patch management", "WAF", "Network segmentation"]
+    },
+    {
+      "technique_id": "T1098",
+      "name": "Account Manipulation",
+      "tactic": "Persistence, Privilege Escalation",
+      "description": "Adversaries modify accounts (roles, credentials, MFA devices) to maintain or elevate access.",
+      "keywords": ["mfa device added", "role assignment", "privilege granted", "oauth consent", "add member to group", "password reset"],
+      "detection": "Alert on privileged role assignments and MFA method registrations outside normal workflows.",
+      "mitigations": ["Approval workflows for privileged roles", "Alert on MFA changes"]
+    }
+  ]
+}

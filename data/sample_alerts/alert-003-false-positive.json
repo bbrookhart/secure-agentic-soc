@@ -1,0 +1,38 @@
+{
+  "alert_id": "ALRT-2026-0114-003",
+  "source": "SIEM",
+  "title": "Impossible travel detected for user k.novak",
+  "description": "Two successful sign-ins for k.novak@corp.example were observed three minutes apart, geolocating to Berlin and Amsterdam respectively. Both authentications used a managed device and satisfied MFA. Both source addresses fall within 192.0.2.0/24, which the asset inventory records as the corporate VPN egress pool; this pool rotates exit nodes between European regions.",
+  "detected_at": "2026-01-14T07:05:02Z",
+  "reported_severity": "low",
+  "assets": [
+    {
+      "name": "k.novak",
+      "asset_type": "user",
+      "criticality": "standard",
+      "owner": "Engineering"
+    },
+    {
+      "name": "WKS-3390",
+      "asset_type": "host",
+      "ip_address": "10.20.7.90",
+      "criticality": "standard",
+      "owner": "k.novak"
+    }
+  ],
+  "indicators": [
+    {
+      "value": "192.0.2.199",
+      "indicator_type": "ipv4",
+      "context": "Corporate VPN egress address recorded in asset inventory"
+    }
+  ],
+  "raw_event": {
+    "detection_rule": "SIEM-IDENTITY-IMPOSSIBLE-TRAVEL",
+    "locations": ["Berlin", "Amsterdam"],
+    "time_delta_minutes": 3,
+    "device_state": "managed",
+    "mfa": "satisfied",
+    "known_vpn_range": true
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "alert_id": "ALRT-2026-0110-002",
+  "source": "Email Gateway",
+  "title": "Credential phishing campaign delivered to 42 recipients",
+  "description": "An HR-themed message claiming to concern 2026 benefits enrollment was delivered to 42 mailboxes from hr-benefits@sso-login-verify.example. SPF failed and no DKIM signature was present. The embedded link points to a login page that visually clones the corporate SSO portal. Proxy logs show at least one user (a.chen) submitted credentials, followed by a sign-in from an unregistered device.",
+  "detected_at": "2026-01-10T13:02:11Z",
+  "reported_severity": "high",
+  "assets": [
+    {
+      "name": "a.chen",
+      "asset_type": "user",
+      "criticality": "standard",
+      "owner": "Finance"
+    },
+    {
+      "name": "MAILGW-01",
+      "asset_type": "service",
+      "ip_address": "10.10.0.5",
+      "criticality": "important",
+      "owner": "Messaging"
+    }
+  ],
+  "indicators": [
+    {
+      "value": "hr-benefits@sso-login-verify.example",
+      "indicator_type": "email",
+      "context": "Sender address of the phishing campaign"
+    },
+    {
+      "value": "https://sso-login-verify.example/auth/o365",
+      "indicator_type": "url",
+      "context": "Credential harvesting landing page"
+    },
+    {
+      "value": "sso-login-verify.example",
+      "indicator_type": "domain",
+      "context": "Typosquatted domain hosting the phishing kit"
+    },
+    {
+      "value": "198.51.100.77",
+      "indicator_type": "ipv4",
+      "context": "Source address of the subsequent sign-in"
+    }
+  ],
+  "raw_event": {
+    "detection_rule": "MAIL-PHISH-SPF-FAIL-011",
+    "recipients": 42,
+    "spf": "fail",
+    "dkim": "none",
+    "dmarc": "fail",
+    "clicked": 3,
+    "submitted_credentials": 1
+  }
+}

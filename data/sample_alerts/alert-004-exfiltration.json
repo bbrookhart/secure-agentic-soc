@@ -1,0 +1,43 @@
+{
+  "alert_id": "ALRT-2026-0113-004",
+  "source": "NDR",
+  "title": "Large outbound transfer from database server to newly observed host",
+  "description": "SRV-DB-01 transferred 8.4 GB to 203.0.113.201:443 over 41 minutes. The destination was first observed in the environment the same day. Immediately prior, the svc-reporting service account created a password-protected 7-Zip archive of D:\\data\\customers, and proxy logs record an 8.8 GB PUT to backup-sync.example. The svc-reporting account had authenticated from a workstation subnet earlier that evening, which is inconsistent with its normal behaviour.",
+  "detected_at": "2026-01-13T22:12:41Z",
+  "reported_severity": "high",
+  "assets": [
+    {
+      "name": "SRV-DB-01",
+      "asset_type": "host",
+      "ip_address": "10.30.1.9",
+      "criticality": "critical",
+      "owner": "Data Platform"
+    },
+    {
+      "name": "svc-reporting",
+      "asset_type": "user",
+      "criticality": "important",
+      "owner": "Data Platform"
+    }
+  ],
+  "indicators": [
+    {
+      "value": "203.0.113.201",
+      "indicator_type": "ipv4",
+      "context": "Destination of the 8.4 GB outbound transfer"
+    },
+    {
+      "value": "backup-sync.example",
+      "indicator_type": "domain",
+      "context": "Consumer file-sync service receiving the archive upload"
+    }
+  ],
+  "raw_event": {
+    "detection_rule": "NDR-EXFIL-VOLUME-002",
+    "bytes_out": 8812340221,
+    "duration_minutes": 41,
+    "destination_first_seen": "2026-01-13",
+    "archive_created": true,
+    "archive_password_protected": true
+  }
+}

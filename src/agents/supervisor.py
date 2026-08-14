@@ -1,0 +1,319 @@
+"""Supervisor agent -- orchestration and policy enforcement.
+
+The supervisor is where this project makes its central security argument:
+**reasoning and authority are separated.**
+
+* The **deterministic router** (:func:`deterministic_route`) decides what
+  happens next.  It reads validated state and applies ordered rules.  It is the
+  authority.
+* The **LLM advisor** (optional) is asked for its opinion on the same state.
+  Its answer is recorded in the audit log and compared with the router's.  When
+  they disagree, the router wins and the disagreement is logged as an override.
+  It is reasoning without authority.
+
+That structure means an attacker who fully controls the model's output can, at
+worst, generate a logged disagreement.  They cannot route around triage, skip
+the approval gate, or drive the graph to FINISH with an unreviewed critical
+incident -- because the model was never the thing making that call.
+
+The supervisor also holds **no tools at all** (see ``security/identity.py``),
+so compromising the orchestrator yields no capability either.
+"""
+
+from __future__ import annotations
+
+from enum import Enum
+
+from pydantic import BaseModel, Field
+
+from src.agents.base import SECURITY_PREAMBLE, AgentContext
+from src.enums import (
+    AgentRole,
+    AlertCategory,
+    ApprovalStatus,
+    AuditAction,
+    PolicyEffect,
+    Severity,
+)
+from src.llm import structured_completion
+from src.security.audit import AuditEvent
+from src.security.policy import ApprovalPolicy, PolicyDecision, PolicyInput
+from src.state import Phase, SOCState
+
+#: Hard ceiling on supervisor turns, so a routing bug cannot loop forever.
+MAX_SUPERVISOR_TURNS = 12
+
+
+class Route(str, Enum):
+    """Where the supervisor can send control next."""
+
+    TRIAGE = "triage"
+    ENRICHMENT = "enrichment"
+    HUMAN_APPROVAL = "human_approval"
+    REPORTER = "reporter"
+    FINISH = "finish"
+    HALT = "halt"
+
+
+class RouteDecision(BaseModel):
+    """A routing decision plus the rule that produced it."""
+
+    model_config = {"frozen": True}
+
+    route: Route
+    rule_id: str
+    reason: str
+
+
+class SupervisorLLMOutput(BaseModel):
+    """Advisory schema for the LLM supervisor. Never authoritative."""
+
+    next_agent: Route = Field(description="Which step should run next.")
+    reason: str = Field(max_length=600, description="One or two sentences justifying the choice.")
+
+
+SUPERVISOR_SYSTEM_PROMPT = (
+    SECURITY_PREAMBLE
+    + """
+You are the SUPERVISOR of a SOC investigation pipeline. You will be shown the current state of \
+an investigation and asked which step should run next.
+
+Available steps:
+- triage: produce the initial structured assessment. Must happen first.
+- enrichment: enrich indicators, map ATT&CK techniques, correlate historical logs.
+- human_approval: pause for a human analyst to review before continuing.
+- reporter: write the final incident report.
+- finish: the investigation is complete.
+
+IMPORTANT: your answer is ADVISORY. A deterministic policy engine makes the actual routing \
+decision and will override you if you are wrong. Answer honestly rather than strategically; \
+your reasoning is recorded for audit and for comparison against the policy engine.
+"""
+)
+
+
+def build_policy_input(state: SOCState) -> PolicyInput:
+    """Project state down to the structured facts the policy engine may consider."""
+    triage = state.triage_result
+    enrichment = state.enrichment_results
+
+    return PolicyInput(
+        severity=triage.severity if triage else state.alert.reported_severity,
+        confidence=triage.confidence if triage else 1.0,
+        asset_is_critical=state.alert.has_critical_asset,
+        proposed_action_risks=tuple(a.risk for a in enrichment.proposed_actions) if enrichment else (),
+        tool_calls_used=state.tool_calls_used,
+        max_tool_calls=40,
+        untrusted_content_flagged=bool(enrichment and enrichment.untrusted_content_flagged),
+    )
+
+
+def deterministic_route(state: SOCState, policy_decision: PolicyDecision) -> RouteDecision:
+    """The authoritative router. Ordered rules over validated state."""
+    # --- Terminal states --------------------------------------------------
+    if state.phase is Phase.COMPLETE:
+        return RouteDecision(route=Route.FINISH, rule_id="R-000", reason="Run already complete.")
+    if state.phase is Phase.HALTED:
+        return RouteDecision(route=Route.HALT, rule_id="R-001", reason="Run halted.")
+
+    # --- Loop guard -------------------------------------------------------
+    if state.supervisor_turns >= MAX_SUPERVISOR_TURNS:
+        return RouteDecision(
+            route=Route.HALT,
+            rule_id="R-002",
+            reason=f"Supervisor turn limit ({MAX_SUPERVISOR_TURNS}) reached; halting to bound the run.",
+        )
+
+    # --- Hard policy denial ----------------------------------------------
+    if policy_decision.effect is PolicyEffect.DENY:
+        return RouteDecision(
+            route=Route.HALT,
+            rule_id="R-003",
+            reason=f"Policy denied continuation ({policy_decision.rule_id}): {policy_decision.reason}",
+        )
+
+    # --- Triage must happen first ----------------------------------------
+    if state.triage_result is None:
+        return RouteDecision(
+            route=Route.TRIAGE,
+            rule_id="R-010",
+            reason="No triage assessment yet; triage must run before anything else.",
+        )
+
+    triage = state.triage_result
+
+    # --- Enrichment -------------------------------------------------------
+    if state.enrichment_results is None:
+        # Skip enrichment only for confidently benign, non-severe alerts. The
+        # confidence floor matters: a low-confidence "benign" is exactly the
+        # case where skipping investigation would be a mistake.
+        confidently_benign = (
+            triage.category is AlertCategory.BENIGN_OR_FALSE_POSITIVE
+            and triage.severity.rank <= Severity.LOW.rank
+            and triage.confidence >= 0.70
+        )
+        if confidently_benign:
+            return RouteDecision(
+                route=Route.REPORTER,
+                rule_id="R-020",
+                reason=(
+                    f"Triage assessed this as confidently benign ({triage.confidence:.0%}) and "
+                    f"{triage.severity.value} severity; enrichment would add no value."
+                ),
+            )
+        return RouteDecision(
+            route=Route.ENRICHMENT,
+            rule_id="R-021",
+            reason="Triage complete; enrichment needed to test the hypothesis against evidence.",
+        )
+
+    # --- Human approval gate ----------------------------------------------
+    if policy_decision.effect is PolicyEffect.REQUIRE_APPROVAL:
+        if state.approval_status in {ApprovalStatus.NOT_REQUIRED, ApprovalStatus.PENDING}:
+            return RouteDecision(
+                route=Route.HUMAN_APPROVAL,
+                rule_id="R-030",
+                reason=f"Policy requires human approval ({policy_decision.rule_id}): {policy_decision.reason}",
+            )
+
+    # --- Reporting --------------------------------------------------------
+    if state.final_report is None:
+        return RouteDecision(
+            route=Route.REPORTER,
+            rule_id="R-040",
+            reason="Evidence gathering and any required approval are complete; generate the report.",
+        )
+
+    return RouteDecision(
+        route=Route.FINISH,
+        rule_id="R-050",
+        reason="Report produced; investigation complete.",
+    )
+
+
+def _render_state_for_supervisor(state: SOCState) -> str:
+    """Compact state digest for the LLM advisor.
+
+    Only structured facts are included -- no raw alert text.  The advisor does
+    not need attacker-controlled prose to answer "what step comes next", so it
+    is not given any.
+    """
+    triage = state.triage_result
+    enrichment = state.enrichment_results
+
+    lines = [
+        f"alert_id: {state.alert.alert_id}",
+        f"reported_severity: {state.alert.reported_severity.value}",
+        f"critical_asset_involved: {state.alert.has_critical_asset}",
+        f"phase: {state.phase.value}",
+        f"supervisor_turns: {state.supervisor_turns}",
+        f"completed_agents: {state.completed_agents or '[]'}",
+        f"triage_done: {triage is not None}",
+    ]
+    if triage:
+        lines += [
+            f"  triage_severity: {triage.severity.value}",
+            f"  triage_category: {triage.category.value}",
+            f"  triage_confidence: {triage.confidence}",
+        ]
+    lines.append(f"enrichment_done: {enrichment is not None}")
+    if enrichment:
+        lines += [
+            f"  malicious_indicators: {enrichment.malicious_indicator_count}",
+            f"  techniques_mapped: {len(enrichment.mitre_techniques)}",
+            f"  log_hits: {len(enrichment.log_hits)}",
+            f"  proposed_actions: {len(enrichment.proposed_actions)}",
+            f"  injection_flagged: {enrichment.untrusted_content_flagged}",
+        ]
+    lines += [
+        f"approval_status: {state.approval_status.value}",
+        f"report_done: {state.final_report is not None}",
+    ]
+    return "\n".join(lines)
+
+
+def run_supervisor(
+    state: SOCState,
+    context: AgentContext,
+    policy: ApprovalPolicy,
+    *,
+    consult_llm: bool = True,
+) -> tuple[RouteDecision, PolicyDecision, list[AuditEvent]]:
+    """Evaluate policy, decide the route, and record both."""
+    events: list[AuditEvent] = []
+
+    # --- 1. Policy evaluation (deterministic, LLM-free) -------------------
+    policy_input = build_policy_input(state)
+    policy_decision = policy.evaluate(policy_input)
+    events.append(
+        context.log(
+            AuditAction.POLICY_EVALUATED,
+            f"policy: {policy_decision.effect.value} ({policy_decision.rule_id})",
+            {
+                "effect": policy_decision.effect.value,
+                "rule_id": policy_decision.rule_id,
+                "reason": policy_decision.reason,
+                "matched_rules": list(policy_decision.matched_rules),
+                "inputs": policy_input.model_dump(mode="json"),
+            },
+        )
+    )
+
+    # --- 2. Authoritative routing ----------------------------------------
+    decision = deterministic_route(state, policy_decision)
+
+    # --- 3. Advisory LLM opinion -----------------------------------------
+    if consult_llm:
+        call = structured_completion(
+            SupervisorLLMOutput,
+            system_prompt=SUPERVISOR_SYSTEM_PROMPT,
+            user_prompt=(
+                "Current investigation state:\n"
+                f"{_render_state_for_supervisor(state)}\n\n"
+                "Which step should run next, and why?"
+            ),
+            actor=AgentRole.SUPERVISOR,
+            thread_id=context.thread_id,
+            audit=context.audit,
+        )
+        events.extend(call.audit_events)
+
+        if call.ok and call.parsed is not None:
+            advisory: SupervisorLLMOutput = call.parsed
+            agreed = advisory.next_agent is decision.route
+            events.append(
+                context.log(
+                    AuditAction.ROUTING_DECISION,
+                    (
+                        f"LLM advisor agreed: {advisory.next_agent.value}"
+                        if agreed
+                        else f"LLM advisor OVERRIDDEN: proposed '{advisory.next_agent.value}', "
+                        f"policy routed to '{decision.route.value}'"
+                    ),
+                    {
+                        "advisory_route": advisory.next_agent.value,
+                        "advisory_reason": advisory.reason,
+                        "authoritative_route": decision.route.value,
+                        "authoritative_rule": decision.rule_id,
+                        "agreed": agreed,
+                    },
+                    success=agreed,
+                )
+            )
+
+    # --- 4. Record the authoritative decision ----------------------------
+    events.append(
+        context.log(
+            AuditAction.ROUTING_DECISION,
+            f"route -> {decision.route.value} ({decision.rule_id})",
+            {
+                "route": decision.route.value,
+                "rule_id": decision.rule_id,
+                "reason": decision.reason,
+                "phase": state.phase.value,
+                "turn": state.supervisor_turns,
+            },
+        )
+    )
+
+    return decision, policy_decision, events
