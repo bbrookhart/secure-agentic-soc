@@ -71,6 +71,10 @@ backup:  ## Archive the state volume (audit, checkpoints, cases)
 health:  ## Readiness checks (can this system triage an alert safely?)
 	$(PYTHON) -m src.run_cli --health
 
+evidence:  ## Generate the control-evidence bundle (reads live components)
+	$(PYTHON) -m src.evidence --out evidence.md --json evidence.json
+	@echo "wrote evidence.md and evidence.json"
+
 policy:  ## Print the approval policy and agent capability matrix
 	$(PYTHON) -m src.run_cli --policy
 

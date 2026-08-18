@@ -15,7 +15,7 @@ or reach a capability it was never granted.
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Supervisor-1C3C3C?style=flat-square)](https://langchain-ai.github.io/langgraph/)
 [![Ollama](https://img.shields.io/badge/Ollama-Local_Inference-000000?style=flat-square&logo=ollama&logoColor=white)](https://ollama.com)
-[![Tests](https://img.shields.io/badge/tests-294_passing-3FB950?style=flat-square)](tests/)
+[![Tests](https://img.shields.io/badge/tests-310_passing-3FB950?style=flat-square)](tests/)
 [![Type checked](https://img.shields.io/badge/mypy-strict-2A6DB0?style=flat-square)](pyproject.toml)
 
 [![Local first](https://img.shields.io/badge/🔒_Local_first-no_data_egress-0969DA?style=flat-square)](#security-controls)
@@ -538,8 +538,8 @@ src/
 evals/            35 labelled alerts + scoring runner + baseline comparison
 scripts/          supply-chain tooling (dependency audit wrapper)
 data/             sample alerts · MITRE subset · threat intel · log corpus
-docs/             ARCHITECTURE.md · THREAT_MODEL.md · RUNBOOKS.md
-tests/            294 tests, all offline
+docs/             ARCHITECTURE.md · THREAT_MODEL.md · CONTROLS.md · RUNBOOKS.md
+tests/            310 tests, all offline
 ```
 
 > [!TIP]
@@ -650,6 +650,22 @@ Hallucination
 </details>
 
 Detailed mapping tables in [docs/THREAT_MODEL.md §4](docs/THREAT_MODEL.md).
+
+<details>
+<summary><b>NIST SP 800-53 · NIST SSDF</b></summary>
+
+<br/>
+
+Control-by-control mapping in **[docs/CONTROLS.md](docs/CONTROLS.md)**, covering AC, AU, CM,
+CP, IA, IR, RA, SA, SC and SI families plus the SSDF practices behind the build pipeline.
+
+The mapping is only half of it. `make evidence` generates a bundle by reading the live
+components — the capability matrix from the identity registry, the approval rules from the
+policy engine, chain status from verifying real records — so it **can and should contradict
+the documentation** when a deployment differs from it. A control that is claimed and a
+control that is demonstrated are different things.
+
+</details>
 
 ---
 

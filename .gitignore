@@ -1,6 +1,12 @@
 # Runtime state: checkpoints, audit logs, vector index
 state/
 
+# Generated evidence: regenerate with `make evidence` rather than committing
+# a snapshot that will disagree with the deployment it claims to describe.
+evidence.md
+evidence.json
+sbom.json
+
 # Secrets
 .env
 .env.local
