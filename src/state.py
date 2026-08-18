@@ -461,11 +461,15 @@ class ApprovalDecision(BaseModel):
     # self-asserted answers nothing, so the provenance of the identity is
     # recorded alongside it rather than left implicit.
     identity_source: str = Field(default="unauthenticated", max_length=64)
+    # Roles the proxy asserted for this approver. Carried on the decision
+    # because only the console can verify them -- a CLI operator naming a
+    # role would be self-granting authority.
+    roles: tuple[str, ...] = ()
     notes: str = Field(default="", max_length=2000)
     approved_action_ids: tuple[str, ...] = ()
     decided_at: datetime = Field(default_factory=_utc_now)
 
-    @field_validator("approved_action_ids", mode="before")
+    @field_validator("approved_action_ids", "roles", mode="before")
     @classmethod
     def _coerce_sequence(cls, value: Any) -> Any:
         return tuple(value) if isinstance(value, list) else value
@@ -481,6 +485,9 @@ class RunMetadata(BaseModel):
     offline_mode: bool = False
     app_version: str = "0.1.0"
     alert_fingerprint: str = ""
+    # Who started this investigation. Recorded so the approval gate can
+    # refuse to let the same person sign off their own run (AC-5).
+    initiated_by: str = ""
 
     @property
     def duration_seconds(self) -> float | None:
@@ -538,6 +545,13 @@ class SOCState(BaseModel):
     approval_rule_id: str = ""
     approval_request: ApprovalRequest | None = None
     approval_decision: ApprovalDecision | None = None
+    # Every approval recorded so far. Usually one; two-person integrity for
+    # disruptive actions on critical assets needs the gate to reopen until a
+    # second, distinct approver has signed.
+    recorded_approvals: tuple[ApprovalDecision, ...] = ()
+    # Refused approval attempts. A caller that keeps resubmitting the same
+    # unauthorised answer would otherwise spin the gate until the turn limit.
+    authorization_denials: int = Field(default=0, ge=0)
 
     # --- Diagnostics ------------------------------------------------------
     errors: Annotated[list[str], operator.add] = Field(default_factory=list)
@@ -596,6 +610,7 @@ class SOCState(BaseModel):
         thread_id: str | None = None,
         model_name: str = "unknown",
         offline_mode: bool = False,
+        initiated_by: str = "",
     ) -> SOCState:
         """Create the initial state for a new investigation."""
         resolved_thread = thread_id or f"run-{uuid.uuid4().hex[:12]}"
@@ -606,5 +621,6 @@ class SOCState(BaseModel):
                 model_name=model_name,
                 offline_mode=offline_mode,
                 alert_fingerprint=alert.fingerprint(),
+                initiated_by=initiated_by,
             ),
         )

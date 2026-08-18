@@ -26,6 +26,16 @@ def graph(audit_logger, broker):
     )
 
 
+#: An approval as the authenticating console would submit it: a
+#: proxy-verified identity carrying a group that maps to a role. Approvals
+#: without one are refused by design -- see tests/test_authz.py.
+APPROVER = {
+    "decided_by": "s.senior",
+    "identity_source": "proxy_header",
+    "roles": ["soc-senior"],
+}
+
+
 def _config(state: SOCState) -> dict:
     return {"configurable": {"thread_id": state.run.thread_id}, "recursion_limit": 50}
 
@@ -79,14 +89,14 @@ class TestHighSeverityHITL:
         graph.invoke(initial, config=config)
 
         graph.invoke(
-            Command(resume={"approved": True, "decided_by": "test-analyst", "notes": "ok"}),
+            Command(resume={**APPROVER, "approved": True, "notes": "ok"}),
             config=config,
         )
         state = _state_of(graph, config)
 
         assert state.phase is Phase.COMPLETE
         assert state.approval_status is ApprovalStatus.APPROVED
-        assert state.approval_decision.decided_by == "test-analyst"
+        assert state.approval_decision.decided_by == "s.senior"
         assert state.final_report is not None
 
     def test_rejection_still_produces_a_report(self, graph, sample_alert):
@@ -96,7 +106,7 @@ class TestHighSeverityHITL:
         graph.invoke(initial, config=config)
 
         graph.invoke(
-            Command(resume={"approved": False, "decided_by": "test-analyst", "notes": "not now"}),
+            Command(resume={**APPROVER, "approved": False, "notes": "not now"}),
             config=config,
         )
         state = _state_of(graph, config)
@@ -155,7 +165,7 @@ class TestInjectionContainment:
         initial = SOCState.bootstrap(injection_alert, offline_mode=True)
         config = _config(initial)
         graph.invoke(initial, config=config)
-        graph.invoke(Command(resume={"approved": False, "decided_by": "test"}), config=config)
+        graph.invoke(Command(resume={**APPROVER, "approved": False}), config=config)
 
         report = _state_of(graph, config).final_report
         assert report is not None
@@ -167,7 +177,7 @@ class TestAuditCompleteness:
         initial = SOCState.bootstrap(sample_alert, offline_mode=True)
         config = _config(initial)
         graph.invoke(initial, config=config)
-        graph.invoke(Command(resume={"approved": True, "decided_by": "test"}), config=config)
+        graph.invoke(Command(resume={**APPROVER, "approved": True}), config=config)
 
         actions = {e.action.value for e in audit_logger.read_events(initial.run.thread_id)}
         for required in {
@@ -183,7 +193,7 @@ class TestAuditCompleteness:
         initial = SOCState.bootstrap(sample_alert, offline_mode=True)
         config = _config(initial)
         graph.invoke(initial, config=config)
-        graph.invoke(Command(resume={"approved": True, "decided_by": "test"}), config=config)
+        graph.invoke(Command(resume={**APPROVER, "approved": True}), config=config)
 
         ok, message = verify_chain(audit_logger.read_events(initial.run.thread_id))
         assert ok, message
@@ -192,7 +202,7 @@ class TestAuditCompleteness:
         initial = SOCState.bootstrap(sample_alert, offline_mode=True)
         config = _config(initial)
         graph.invoke(initial, config=config)
-        graph.invoke(Command(resume={"approved": True, "decided_by": "alice"}), config=config)
+        graph.invoke(Command(resume={**APPROVER, "approved": True, "decided_by": "alice"}), config=config)
 
         approvals = [
             e for e in audit_logger.read_events(initial.run.thread_id)

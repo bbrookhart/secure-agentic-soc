@@ -32,13 +32,20 @@ from pydantic import BaseModel, ConfigDict
 
 
 class AnalystIdentity(BaseModel):
-    """A proxy-verified approver."""
+    """A proxy-verified approver, and the groups the proxy asserted for them.
+
+    Groups are carried but not interpreted here. This module answers *who is
+    this*; :mod:`src.security.authz` answers *what may they do*. Keeping the two
+    apart means a change to the authority matrix cannot accidentally alter
+    authentication, and vice versa.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     username: str
     source: str = "proxy_header"
     email: str = ""
+    groups: tuple[str, ...] = ()
 
     @property
     def display(self) -> str:
@@ -70,7 +77,14 @@ def resolve_identity(headers: Mapping[str, str] | None) -> AnalystIdentity | Non
         return None
 
     email = (lookup.get("x-forwarded-email") or "").strip()
-    return AnalystIdentity(username=username[:128], email=email[:254])
+    raw_groups = (lookup.get(settings.approval_roles_header.lower()) or "").strip()
+    groups = tuple(
+        part.strip()[:128]
+        for part in raw_groups.replace(";", ",").split(",")
+        if part.strip()
+    )
+
+    return AnalystIdentity(username=username[:128], email=email[:254], groups=groups[:32])
 
 
 def require_identity(headers: Mapping[str, str] | None) -> AnalystIdentity:

@@ -20,14 +20,19 @@ ui:  ## Launch the Streamlit analyst dashboard (local, unauthenticated)
 	SOC_REQUIRE_AUTHENTICATED_APPROVAL=false .venv/bin/streamlit run src/ui/app.py
 
 demo:  ## Full walkthrough: benign alert, then the HITL path, then injection
-	$(PYTHON) -m src.run_cli --alert alert-003-false-positive --quiet-audit
-	$(PYTHON) -m src.run_cli --alert alert-001-ransomware --approve
-	$(PYTHON) -m src.run_cli --alert alert-005-prompt-injection --reject --quiet-audit
+	@echo "NOTE: CLI approvals are self-asserted, so this runs with"
+	@echo "      SOC_REQUIRE_AUTHENTICATED_APPROVAL=false. Decisions are recorded"
+	@echo "      as unauthenticated, and separation of duties is off because a"
+	@echo "      single operator is both initiator and approver. The console is"
+	@echo "      the real approval surface."
+	SOC_REQUIRE_AUTHENTICATED_APPROVAL=false SOC_REQUIRE_SEPARATION_OF_DUTIES=false $(PYTHON) -m src.run_cli --alert alert-003-false-positive --quiet-audit
+	SOC_REQUIRE_AUTHENTICATED_APPROVAL=false SOC_REQUIRE_SEPARATION_OF_DUTIES=false $(PYTHON) -m src.run_cli --alert alert-001-ransomware --approve
+	SOC_REQUIRE_AUTHENTICATED_APPROVAL=false SOC_REQUIRE_SEPARATION_OF_DUTIES=false $(PYTHON) -m src.run_cli --alert alert-005-prompt-injection --reject --quiet-audit
 
 demo-offline:  ## Same walkthrough with no LLM (deterministic, fast)
-	$(PYTHON) -m src.run_cli --alert alert-003-false-positive --offline --quiet-audit
-	$(PYTHON) -m src.run_cli --alert alert-001-ransomware --offline --approve
-	$(PYTHON) -m src.run_cli --alert alert-005-prompt-injection --offline --reject --quiet-audit
+	SOC_REQUIRE_AUTHENTICATED_APPROVAL=false SOC_REQUIRE_SEPARATION_OF_DUTIES=false $(PYTHON) -m src.run_cli --alert alert-003-false-positive --offline --quiet-audit
+	SOC_REQUIRE_AUTHENTICATED_APPROVAL=false SOC_REQUIRE_SEPARATION_OF_DUTIES=false $(PYTHON) -m src.run_cli --alert alert-001-ransomware --offline --approve
+	SOC_REQUIRE_AUTHENTICATED_APPROVAL=false SOC_REQUIRE_SEPARATION_OF_DUTIES=false $(PYTHON) -m src.run_cli --alert alert-005-prompt-injection --offline --reject --quiet-audit
 
 test:  ## Run the test suite
 	$(PYTHON) -m pytest

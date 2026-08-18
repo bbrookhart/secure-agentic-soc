@@ -38,8 +38,13 @@ from src.memory import attach_case_context, record_run  # noqa: E402
 from src.security.approval_identity import (  # noqa: E402
     UnauthenticatedApproval,
     require_identity,
+    resolve_identity,
 )
 from src.security.audit import get_audit_logger, verify_chain  # noqa: E402
+from src.security.authz import (  # noqa: E402
+    effective_authority,
+    roles_from_groups,
+)
 from src.security.identity import capability_matrix  # noqa: E402
 from src.security.policy import default_policy  # noqa: E402
 from src.state import SOCState  # noqa: E402
@@ -175,13 +180,24 @@ def render_approval_panel(thread_id: str, request: dict[str, Any]) -> None:
         st.error(f"**Approval unavailable** — {exc}")
         return
 
+    roles = roles_from_groups(list(identity.groups))
     if identity.source == "unauthenticated":
         st.warning(
             "No authenticating proxy is configured. This decision will be recorded as "
-            "**unverified** in the audit trail."
+            "**unverified** in the audit trail, and role ceilings are not enforced "
+            "because they would be self-granted."
+        )
+    elif not roles:
+        st.error(
+            f"**{identity.display}** holds no recognised SOC role. Approval authority comes "
+            "from group membership asserted by the proxy; this identity has none."
         )
     else:
-        st.caption(f"Approving as **{identity.display}** (verified by proxy)")
+        authority = effective_authority(roles)
+        st.caption(
+            f"Approving as **{identity.display}** — "
+            f"{authority.display_name if authority else 'no authority'} (verified by proxy)"
+        )
 
     with st.form(f"approval-{request.get('request_id')}"):
         notes = st.text_area("Decision notes", placeholder="Rationale, scope limits, follow-ups…")
@@ -197,6 +213,9 @@ def render_approval_panel(thread_id: str, request: dict[str, Any]) -> None:
             "approved": bool(approved),
             "decided_by": identity.username,
             "identity_source": identity.source,
+            # Roles travel with the decision because only this console can
+            # verify them; the gate re-derives authority from them.
+            "roles": list(identity.groups),
             "notes": notes,
             "approved_action_ids": [a["action_id"] for a in actions] if approved else [],
         }
@@ -389,11 +408,15 @@ def main() -> None:
                 return
 
         if alert is not None:
+            starter = resolve_identity(_request_headers())
             initial = attach_case_context(
                 SOCState.bootstrap(
                     alert,
                     model_name=settings.ollama_model,
                     offline_mode=settings.offline_mode,
+                    # Recorded so the gate can refuse to let whoever started
+                    # this run also sign it off (AC-5).
+                    initiated_by=starter.username if starter else "",
                 )
             )
             if initial.duplicate_of:

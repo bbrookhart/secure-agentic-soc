@@ -46,6 +46,7 @@ from src.agents.supervisor import Route, run_supervisor
 from src.agents.triage import run_triage
 from src.enums import AgentRole, ApprovalStatus, AuditAction
 from src.security.audit import AuditLogger, get_audit_logger
+from src.security.authz import ApprovalContext, authorize_approval, required_approvals
 from src.security.policy import ApprovalPolicy, default_policy
 from src.state import (
     ApprovalDecision,
@@ -56,6 +57,10 @@ from src.state import (
     validate_transition,
 )
 from src.tools import ToolBroker, build_broker
+
+#: Refused approvals tolerated before the run halts. Bounds a caller that
+#: keeps resubmitting the same unauthorised answer.
+MAX_AUTHORIZATION_DENIALS = 3
 
 #: Route -> phase the supervisor moves the run into when dispatching there.
 _ROUTE_PHASE: dict[Route, Phase] = {
@@ -282,7 +287,117 @@ def build_graph(
         # only safe default for an approval gate.
         decision = _parse_approval_response(response, request.request_id)
 
+        # --- Authorisation ------------------------------------------------
+        # Authentication established *who* this is at the console. This decides
+        # whether they may sign *this*. It runs on approvals only: a rejection
+        # is always permitted, because refusing to act is never the dangerous
+        # direction, and requiring authority to say "no" would strand runs.
+        if decision.approved:
+            authorization = authorize_approval(_approval_context(state, decision))
+            if not authorization.allowed:
+                denial = audit_logger.record(
+                    thread_id=state.run.thread_id,
+                    actor=AgentRole.HUMAN_ANALYST,
+                    action=AuditAction.AUTHORIZATION_DENIED,
+                    summary=f"approval refused: {authorization.rule_id}",
+                    details={
+                        "request_id": request.request_id,
+                        "approver": decision.decided_by,
+                        "identity_source": decision.identity_source,
+                        "rule_id": authorization.rule_id,
+                        "reason": authorization.reason,
+                        "roles": [role.value for role in authorization.matched_roles],
+                        "initiated_by": state.run.initiated_by,
+                    },
+                    success=False,
+                )
+                # The gate stays shut and PENDING. An unauthorised approval is
+                # not a rejection -- the incident still needs someone who can
+                # actually sign it.
+                #
+                # Bounded, though: a caller that resubmits the same refused
+                # answer (an automation with --approve, say) would otherwise
+                # loop here until the supervisor turn limit, filling the audit
+                # log with identical denials. After MAX_DENIALS the run halts
+                # and says why.
+                denials = state.authorization_denials + 1
+                if denials >= MAX_AUTHORIZATION_DENIALS:
+                    return {
+                        "approval_status": ApprovalStatus.PENDING,
+                        "authorization_denials": denials,
+                        "phase": Phase.HALTED,
+                        "errors": [
+                            f"halted after {denials} refused approval attempts "
+                            f"({authorization.rule_id}); an authorised approver is required"
+                        ],
+                        "audit_log": [denial],
+                        "messages": [
+                            AIMessage(
+                                content=(
+                                    f"[authorization] halting after {denials} refused "
+                                    f"attempts: {authorization.reason}"
+                                ),
+                                name="authorization",
+                            )
+                        ],
+                    }
+                return {
+                    "approval_status": ApprovalStatus.PENDING,
+                    "authorization_denials": denials,
+                    "audit_log": [denial],
+                    "messages": [
+                        AIMessage(
+                            content=(
+                                f"[authorization] REFUSED for {decision.decided_by} "
+                                f"({authorization.rule_id}): {authorization.reason}"
+                            ),
+                            name="authorization",
+                        )
+                    ],
+                }
+
         approved = decision.approved
+        recorded = (*state.recorded_approvals, decision) if approved else state.recorded_approvals
+
+        # --- Two-person integrity ------------------------------------------
+        needed = required_approvals(
+            action_risks=tuple(a.risk for a in request.proposed_actions),
+            asset_is_critical=state.alert.has_critical_asset,
+        )
+        distinct_approvers = {entry.decided_by for entry in recorded}
+        quorum_met = len(distinct_approvers) >= needed
+
+        if approved and not quorum_met:
+            waiting = audit_logger.record(
+                thread_id=state.run.thread_id,
+                actor=AgentRole.HUMAN_ANALYST,
+                action=AuditAction.APPROVAL_REQUESTED,
+                summary=(
+                    f"approval {len(distinct_approvers)}/{needed} recorded; "
+                    "awaiting a second approver"
+                ),
+                details={
+                    "request_id": request.request_id,
+                    "approver": decision.decided_by,
+                    "approvals_recorded": sorted(distinct_approvers),
+                    "approvals_required": needed,
+                },
+            )
+            return {
+                "recorded_approvals": recorded,
+                "approval_status": ApprovalStatus.PENDING,
+                "audit_log": [waiting],
+                "messages": [
+                    AIMessage(
+                        content=(
+                            f"[human_analyst] {decision.decided_by} approved "
+                            f"({len(distinct_approvers)}/{needed}); a second approver is required."
+                        ),
+                        name="human_analyst",
+                    )
+                ],
+            }
+
         status = ApprovalStatus.APPROVED if approved else ApprovalStatus.REJECTED
         target_phase = Phase.APPROVED if approved else Phase.REJECTED
 
@@ -300,11 +415,14 @@ def build_graph(
                 "identity_source": decision.identity_source,
                 "notes": decision.notes,
                 "approved_action_ids": list(decision.approved_action_ids),
+                "approvers": sorted(distinct_approvers) if approved else [],
+                "approvals_required": needed,
             },
         )
 
         return {
             "approval_decision": decision,
+            "recorded_approvals": recorded,
             "approval_status": status,
             "audit_log": [event],
             "completed_agents": ["human_approval"],
@@ -387,6 +505,31 @@ def build_graph(
         graph.add_edge(node, "supervisor")
 
     return graph.compile(checkpointer=checkpointer)
+
+
+def _approval_context(state: SOCState, decision: ApprovalDecision) -> ApprovalContext:
+    """Project state and the decision into the facts authorization may consider.
+
+    Structured values only, like :class:`~src.security.policy.PolicyInput`. The
+    roles come from the decision because only the console can verify them; a CLI
+    operator asserting a role would be self-granting authority.
+    """
+    from src.config import get_settings
+    from src.security.authz import roles_from_groups
+
+    enrichment = state.enrichment_results
+    return ApprovalContext(
+        approver=decision.decided_by,
+        roles=roles_from_groups(list(decision.roles)),
+        severity=state.triage_result.severity if state.triage_result else state.alert.reported_severity,
+        action_risks=tuple(a.risk for a in enrichment.proposed_actions) if enrichment else (),
+        asset_is_critical=state.alert.has_critical_asset,
+        initiated_by=state.run.initiated_by,
+        prior_approvers=tuple(entry.decided_by for entry in state.recorded_approvals),
+        identity_verified=decision.identity_source == "proxy_header",
+        authentication_required=get_settings().require_authenticated_approval,
+        separation_of_duties_required=get_settings().require_separation_of_duties,
+    )
 
 
 def pending_interrupt(graph: Any, config: dict[str, Any], result: Any = None) -> dict[str, Any] | None:

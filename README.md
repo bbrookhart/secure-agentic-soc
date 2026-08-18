@@ -15,7 +15,7 @@ or reach a capability it was never granted.
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Supervisor-1C3C3C?style=flat-square)](https://langchain-ai.github.io/langgraph/)
 [![Ollama](https://img.shields.io/badge/Ollama-Local_Inference-000000?style=flat-square&logo=ollama&logoColor=white)](https://ollama.com)
-[![Tests](https://img.shields.io/badge/tests-190_passing-3FB950?style=flat-square)](tests/)
+[![Tests](https://img.shields.io/badge/tests-219_passing-3FB950?style=flat-square)](tests/)
 [![Type checked](https://img.shields.io/badge/mypy-strict-2A6DB0?style=flat-square)](pyproject.toml)
 
 [![Local first](https://img.shields.io/badge/🔒_Local_first-no_data_egress-0969DA?style=flat-square)](#security-controls)
@@ -176,6 +176,28 @@ unrepresentable in the state machine.
 > **Two deliberate asymmetries.** The **supervisor holds no tools**, so compromising the
 > orchestrator yields no capability. The **reporter holds no tools**, so the component most
 > exposed to untrusted text has the least authority.
+
+### Approvers
+
+The same idea applied to people. Authority comes from group membership asserted by the
+authenticating proxy — never self-declared — and is proportional to consequence:
+
+| Role | May approve | Severity ceiling | Action ceiling | Critical assets |
+|:--|:--|:--|:--|:--|
+| **Viewer** | — *nothing* | — | — | — |
+| **SOC Analyst** | Routine incidents | `high` | `low_impact` | ✗ |
+| **Senior SOC Analyst** | Anything, incl. containment | `critical` | `disruptive` | ✓ |
+| **Security Administrator** | As above, plus configuration | `critical` | `disruptive` | ✓ |
+
+> [!IMPORTANT]
+> **Separation of duties.** Whoever initiated a run may not approve it. One person deciding
+> both that an investigation happens *and* that its conclusions stand is the control
+> collapsing into a formality. A single-operator deployment cannot satisfy this, so
+> disabling it is a deliberate setting rather than a silent default.
+
+Approving is the only act that needs authority — **rejecting never does**. Refusing to act
+is not the dangerous direction, and requiring rights to say *no* would strand runs whenever
+the only person present could not sign.
 
 ---
 
@@ -516,7 +538,7 @@ src/
 evals/            35 labelled alerts + scoring runner + baseline comparison
 data/             sample alerts · MITRE subset · threat intel · log corpus
 docs/             ARCHITECTURE.md · THREAT_MODEL.md
-tests/            190 tests, all offline
+tests/            219 tests, all offline
 ```
 
 > [!TIP]
@@ -573,7 +595,8 @@ under-called, category accuracy **49%**, **0** missed escalations.
 | Limitation | Impact |
 |:--|:--|
 | **The local audit chain is still rewritable** | It is tamper-*evident*: an attacker with file write and code execution can recompute it and leave it consistent. Set `SOC_AUDIT_FORWARD_URL` or `SOC_AUDIT_SYSLOG_ADDRESS` so every event also lands somewhere this host cannot rewrite — a later local edit then makes the two copies disagree. Unforwarded, this remains the largest gap. |
-| **Console authentication is delegated, not implemented** | Streamlit has none of its own. The approval gate reads a proxy-asserted identity and fails closed without it, but that is only as good as the deployment: the proxy must strip the header from inbound requests, and the app must be reachable only through it. `make ui` and the compose stack opt out explicitly for local use, and decisions taken that way are recorded as `unauthenticated`. |
+| **Console identity and authority are delegated** | Streamlit has no authentication of its own. Both *who you are* and *what you may approve* come from a proxy-asserted identity and group membership, and the gate fails closed without them — but that is only as good as the deployment: the proxy must strip both headers from inbound requests, and the app must be reachable only through it. `make ui`, `make demo` and the compose stack opt out explicitly for local use; those decisions are recorded as `unauthenticated` and skip role ceilings, which would otherwise be self-granted. |
+| **Single-operator deployments cannot separate duties** | AC-5 requires that whoever starts a run not approve it. With one operator at a CLI those are the same person, so `SOC_REQUIRE_SEPARATION_OF_DUTIES=false` is needed — a real reduction in control, made deliberately rather than by default. |
 | **Injection heuristics are pattern-based** | Will miss novel phrasing, other languages, and semantic manipulation containing no instruction-shaped text. Three such cases are in the eval corpus (`INJ-006`, `INJ-007`, `INJ-008`) and are *measured*, not assumed: they defeat the detector and are still contained, because a miss degrades to least privilege and the policy gate rather than to compromise. |
 | **Rule-based triage is weak on category** | With the model switched off, category accuracy is 49% against the labelled corpus while severity stays in band 86% of the time. The deterministic floor is a floor, not a substitute — but it fails safe: 0 missed escalations, and 3 over-escalations across 35 cases. Run `make eval` for the current numbers. |
 | **Correlation is entity-exact** | Alerts are linked by exact asset name, IP or indicator match. An attacker who moves to a differently-named host breaks the link, and there is no fuzzy or behavioural correlation. |

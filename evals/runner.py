@@ -123,7 +123,17 @@ def run_case(case: EvalCase, *, consult_llm: bool, audit_dir: Path) -> CaseOutco
         if pending_interrupt(graph, config, result) is not None:
             outcome.escalated = True
             graph.invoke(
-                Command(resume={"approved": True, "decided_by": "eval-harness"}),
+                Command(
+                    resume={
+                        "approved": True,
+                        "decided_by": "eval-harness",
+                        # Stands in for the authenticating console, so the
+                        # harness exercises the authorised path rather than
+                        # the local unauthenticated one.
+                        "identity_source": "proxy_header",
+                        "roles": ["soc-senior"],
+                    }
+                ),
                 config=config,
             )
 

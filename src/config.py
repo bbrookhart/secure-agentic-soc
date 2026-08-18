@@ -119,6 +119,27 @@ class Settings(BaseSettings):
         default=True,
         description="Refuse to record approvals when no verified identity is present.",
     )
+    approval_roles_header: str = Field(
+        default="X-Forwarded-Groups",
+        description="Header carrying proxy-verified group membership; maps to approval roles.",
+    )
+    require_separation_of_duties: bool = Field(
+        default=True,
+        description=(
+            "Refuse approvals from whoever initiated the run (NIST 800-53 AC-5). "
+            "A single-operator deployment cannot satisfy this and must set it false "
+            "deliberately -- the CLI initiator and approver are the same person by "
+            "construction."
+        ),
+    )
+    require_two_person_approval: bool = Field(
+        default=False,
+        description=(
+            "Require two distinct approvers for disruptive proposals on critical assets. "
+            "Off by default: it doubles the cost of every such approval, which is correct "
+            "in some environments and pure friction in others."
+        ),
+    )
 
     # --- Optional secrets (never placed in prompts) ----------------------
     # Present to demonstrate correct secret handling; the shipped tools are all

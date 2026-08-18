@@ -156,5 +156,8 @@ class AuditAction(str, Enum):
     APPROVAL_GRANTED = "approval_granted"
     APPROVAL_REJECTED = "approval_rejected"
     UNTRUSTED_CONTENT_FLAGGED = "untrusted_content_flagged"
+    # "Someone tried and was refused" -- the event a reviewer looks for, and
+    # which had no representation before human authorization existed.
+    AUTHORIZATION_DENIED = "authorization_denied"
     STATE_TRANSITION = "state_transition"
     ERROR = "error"

@@ -241,6 +241,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         thread_id=args.thread_id,
         model_name=settings.ollama_model,
         offline_mode=settings.offline_mode,
+        initiated_by=args.analyst,
     )
     # What has this environment seen before? Attached once, before the graph
     # starts, so the policy engine can consider it from the first turn.
