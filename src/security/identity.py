@@ -89,7 +89,13 @@ AGENT_IDENTITIES: dict[AgentRole, AgentIdentity] = {
         display_name="Enrichment / Threat Hunter",
         purpose="Enrich indicators, map to MITRE ATT&CK, and search historical logs.",
         allowed_tools=frozenset(
-            {"enrich_ioc", "lookup_mitre", "query_vector_logs", "draft_containment_proposal"}
+            {
+                "enrich_ioc",
+                "lookup_mitre",
+                "query_vector_logs",
+                "query_case_history",
+                "draft_containment_proposal",
+            }
         ),
         # May *draft* disruptive proposals; execution is impossible by design.
         max_action_risk=ActionRisk.DISRUPTIVE,

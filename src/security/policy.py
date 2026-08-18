@@ -35,6 +35,12 @@ class PolicyInput(BaseModel):
     tool_calls_used: int = 0
     max_tool_calls: int = 40
     untrusted_content_flagged: bool = False
+    #: Counts drawn from prior investigations touching the same entities.
+    #: Counts only, never titles or notes -- see the class docstring. History
+    #: is wired to *escalate*; nothing here can talk the gate down, because a
+    #: suppressing rule would be trainable by anyone able to generate
+    #: benign-looking alerts.
+    related_confirmed_malicious: int = Field(default=0, ge=0)
 
 
 class PolicyDecision(BaseModel):
@@ -138,6 +144,18 @@ class ApprovalPolicy:
                     "output; agent conclusions may be unreliable."
                 ),
                 predicate=lambda i: i.untrusted_content_flagged,
+            ),
+            # Last of the approval rules: it is the least specific reason to
+            # stop, so when it fires alongside another the other is the one
+            # worth showing the analyst.
+            PolicyRule(
+                rule_id="HITL-006-recent-confirmed-incident",
+                effect=PolicyEffect.REQUIRE_APPROVAL,
+                reason=(
+                    "An asset or indicator in this alert was part of a recently confirmed "
+                    "incident. A second alert on the same entity is not an independent event."
+                ),
+                predicate=lambda i: i.related_confirmed_malicious > 0,
             ),
         ]
 

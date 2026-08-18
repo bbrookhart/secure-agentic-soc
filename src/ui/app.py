@@ -34,6 +34,7 @@ from src.ingest import (  # noqa: E402
     parse_alert,
     resolve_alert,
 )
+from src.memory import attach_case_context, record_run  # noqa: E402
 from src.security.approval_identity import (  # noqa: E402
     UnauthenticatedApproval,
     require_identity,
@@ -201,6 +202,11 @@ def render_approval_panel(thread_id: str, request: dict[str, Any]) -> None:
         }
         with st.spinner("Resuming investigation…"):
             get_graph().invoke(Command(resume=decision), config=_config(thread_id))
+            # The analyst's decision is the most valuable signal this system
+            # produces; persist it so the next investigation can see it.
+            resumed = _load_state(thread_id)
+            if resumed is not None:
+                record_run(resumed)
         st.rerun()
 
 
@@ -383,11 +389,25 @@ def main() -> None:
                 return
 
         if alert is not None:
-            initial = SOCState.bootstrap(
-                alert,
-                model_name=settings.ollama_model,
-                offline_mode=settings.offline_mode,
+            initial = attach_case_context(
+                SOCState.bootstrap(
+                    alert,
+                    model_name=settings.ollama_model,
+                    offline_mode=settings.offline_mode,
+                )
             )
+            if initial.duplicate_of:
+                st.warning(
+                    f"An identical alert was already investigated in run "
+                    f"`{initial.duplicate_of}`. Continuing produces a second opinion on the "
+                    "same evidence."
+                )
+            if initial.related_run_count:
+                st.info(
+                    f"{initial.related_run_count} related investigation(s) in the last 14 days: "
+                    f"{initial.related_confirmed_malicious} previously confirmed real, "
+                    f"{initial.related_false_positives} closed as false positives."
+                )
             thread_id = initial.run.thread_id
             st.session_state["thread_id"] = thread_id
 

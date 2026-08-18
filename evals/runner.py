@@ -35,6 +35,7 @@ from langgraph.types import Command
 from evals.cases import EvalCase, load_cases
 from src.enums import ApprovalStatus, Severity
 from src.graph import build_graph, build_memory_checkpointer, pending_interrupt
+from src.memory import CaseStore, attach_case_context, record_run, set_case_store
 from src.security.audit import AuditLogger, verify_chain
 from src.state import Phase, SOCState
 from src.tools import build_broker
@@ -96,6 +97,13 @@ def run_case(case: EvalCase, *, consult_llm: bool, audit_dir: Path) -> CaseOutco
 
     audit = AuditLogger(audit_dir / f"{case.case_id}.jsonl")
     broker = build_broker(audit=audit)
+
+    # Each case gets its own case store. Several corpus alerts deliberately
+    # share entities (PAY-PROC-01 appears in TP-011 and FP-010; one C2 address
+    # appears in TP-001 and INJ-012), so a shared store would make every score
+    # depend on corpus order. Correlation is exercised by its own tests, where
+    # the history is set up explicitly.
+    set_case_store(CaseStore(audit_dir / f"{case.case_id}-cases.sqlite"))
     graph = build_graph(
         checkpointer=build_memory_checkpointer(),
         broker=broker,
@@ -103,7 +111,7 @@ def run_case(case: EvalCase, *, consult_llm: bool, audit_dir: Path) -> CaseOutco
         consult_llm=consult_llm,
     )
 
-    initial = SOCState.bootstrap(case.alert, offline_mode=not consult_llm)
+    initial = attach_case_context(SOCState.bootstrap(case.alert, offline_mode=not consult_llm))
     config = {"configurable": {"thread_id": initial.run.thread_id}, "recursion_limit": 50}
 
     try:
@@ -120,6 +128,7 @@ def run_case(case: EvalCase, *, consult_llm: bool, audit_dir: Path) -> CaseOutco
             )
 
         state = SOCState.model_validate(graph.get_state(config).values)
+        record_run(state)
     except Exception as exc:  # noqa: BLE001 - a crashed case is a result, not a stop
         outcome.error = f"{type(exc).__name__}: {exc}"
         outcome.duration_ms = (time.perf_counter() - started) * 1000

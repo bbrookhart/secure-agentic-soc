@@ -118,6 +118,7 @@ def build_policy_input(state: SOCState, *, max_tool_calls: int) -> PolicyInput:
         tool_calls_used=state.tool_calls_used,
         max_tool_calls=max_tool_calls,
         untrusted_content_flagged=flagged,
+        related_confirmed_malicious=state.related_confirmed_malicious,
     )
 
 

@@ -22,6 +22,7 @@ from src.config import get_settings
 from src.enums import AgentRole, AuditAction
 from src.graph import build_checkpointer, build_graph, pending_interrupt
 from src.ingest import AlertIngestError, list_sample_alerts, resolve_alert
+from src.memory import DEDUP_WINDOW, attach_case_context, record_run
 from src.security.audit import get_audit_logger, verify_chain
 from src.security.identity import capability_matrix
 from src.security.policy import default_policy
@@ -241,6 +242,27 @@ def cmd_run(args: argparse.Namespace) -> int:
         model_name=settings.ollama_model,
         offline_mode=settings.offline_mode,
     )
+    # What has this environment seen before? Attached once, before the graph
+    # starts, so the policy engine can consider it from the first turn.
+    initial = attach_case_context(initial)
+    if initial.duplicate_of and not args.force:
+        print(
+            _c(
+                f"\n  Identical alert already investigated in run {initial.duplicate_of} "
+                f"within the last {int(DEDUP_WINDOW.total_seconds() // 3600)}h.",
+                YELLOW,
+            )
+        )
+        print("  Re-running would produce a second opinion on the same bytes. Use --force to override.")
+        return 0
+
+    if initial.related_run_count:
+        print(
+            f"  History  : {initial.related_run_count} related run(s), "
+            f"{initial.related_confirmed_malicious} previously confirmed"
+            + (f" [case {initial.case_id}]" if initial.case_id else "")
+        )
+
     config = {"configurable": {"thread_id": initial.run.thread_id}, "recursion_limit": 50}
 
     audit = get_audit_logger()
@@ -274,6 +296,11 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     final_state = SOCState.model_validate(graph.get_state(config).values)
 
+    # Persist the outcome so the next investigation is not starting cold. The
+    # analyst's decision is the most expensive signal this system produces;
+    # until now it was written to the audit log and never read again.
+    case_id = record_run(final_state)
+
     audit.record(
         thread_id=final_state.run.thread_id,
         actor=AgentRole.SUPERVISOR,
@@ -283,6 +310,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             "phase": final_state.phase.value,
             "verdict": final_state.final_report.verdict.value if final_state.final_report else None,
             "tool_calls": final_state.tool_calls_used,
+            "case_id": case_id,
         },
     )
 
@@ -328,6 +356,11 @@ def main(argv: list[str] | None = None) -> int:
         "CLI decisions as such, since only the console can verify an identity.",
     )
     parser.add_argument("--quiet-audit", action="store_true", help="Suppress the audit trail printout.")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Investigate even if an identical alert was already handled recently.",
+    )
 
     args = parser.parse_args(argv)
 

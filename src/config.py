@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     checkpoint_db: Path = Field(default=PROJECT_ROOT / "state" / "checkpoints.sqlite")
     audit_log_path: Path = Field(default=PROJECT_ROOT / "state" / "audit" / "audit.jsonl")
     chroma_dir: Path = Field(default=PROJECT_ROOT / "state" / "chroma")
+    case_store_db: Path = Field(
+        default=PROJECT_ROOT / "state" / "cases.sqlite",
+        description="Cross-run case history: what was seen before, and what a human decided.",
+    )
 
     # --- Security policy -------------------------------------------------
     hitl_severity_threshold: Severity = Field(
@@ -150,6 +154,7 @@ class Settings(BaseSettings):
             self.chroma_dir,
             self.checkpoint_db.parent,
             self.audit_log_path.parent,
+            self.case_store_db.parent,
         ):
             path.mkdir(parents=True, exist_ok=True)
 

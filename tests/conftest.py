@@ -22,11 +22,18 @@ def _isolated_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SOC_CHECKPOINT_DB", str(tmp_path / "state" / "checkpoints.sqlite"))
     monkeypatch.setenv("SOC_AUDIT_LOG_PATH", str(tmp_path / "state" / "audit" / "audit.jsonl"))
     monkeypatch.setenv("SOC_CHROMA_DIR", str(tmp_path / "state" / "chroma"))
+    monkeypatch.setenv("SOC_CASE_STORE_DB", str(tmp_path / "state" / "cases.sqlite"))
 
     from src.config import get_settings
 
     get_settings.cache_clear()
     yield
+    # Drop the process-wide case store too: it holds an open SQLite handle to a
+    # tmp_path that is about to disappear, and a leaked one would let history
+    # bleed between tests.
+    from src.memory import set_case_store
+
+    set_case_store(None)
     get_settings.cache_clear()
 
 

@@ -119,6 +119,8 @@ def run_reporter(
     approval: ApprovalDecision | None,
     approval_status: ApprovalStatus,
     context: AgentContext,
+    *,
+    case_context: dict[str, int | str] | None = None,
 ) -> tuple[IncidentReport, list[AuditEvent]]:
     """Produce the final :class:`IncidentReport`."""
     events: list[AuditEvent] = []
@@ -247,6 +249,29 @@ def run_reporter(
             "manipulate the analysis pipeline; conclusions drawn from that content should be "
             "verified manually."
         )
+
+    # Cross-run context, copied from validated state rather than narrated. Prior
+    # false positives are surfaced for the analyst's judgement and deliberately
+    # never used to close anything automatically -- see src/memory/case_store.py.
+    if case_context:
+        related = int(case_context.get("related_run_count", 0) or 0)
+        if related:
+            confirmed = int(case_context.get("related_confirmed_malicious", 0) or 0)
+            false_positives = int(case_context.get("related_false_positives", 0) or 0)
+            case_id = str(case_context.get("case_id", "") or "")
+            key_findings.insert(
+                0,
+                f"{related} prior investigation(s) in the last 14 days involved the same assets "
+                f"or indicators: {confirmed} previously confirmed as real, {false_positives} "
+                f"concluded false positive"
+                + (f" (case {case_id})." if case_id else "."),
+            )
+            if false_positives:
+                caveats.append(
+                    f"{false_positives} similar alert(s) on these entities were previously "
+                    "assessed as false positives. That history is provided as context only; "
+                    "it was not used to downgrade or close this alert."
+                )
 
     if approval_status is ApprovalStatus.REJECTED:
         caveats.append(

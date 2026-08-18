@@ -15,6 +15,7 @@ code-execution tool.  That absence is the design.
 from __future__ import annotations
 
 from src.tools.base import SOCTool, ToolBroker, ToolResult
+from src.tools.case_history import QUERY_CASE_HISTORY_TOOL
 from src.tools.classify import CLASSIFY_ALERT_TOOL
 from src.tools.ioc import ENRICH_IOC_TOOL
 from src.tools.log_search import QUERY_VECTOR_LOGS_TOOL
@@ -29,6 +30,7 @@ TOOL_REGISTRY: dict[str, SOCTool] = {
         ENRICH_IOC_TOOL,
         LOOKUP_MITRE_TOOL,
         QUERY_VECTOR_LOGS_TOOL,
+        QUERY_CASE_HISTORY_TOOL,
         DRAFT_CONTAINMENT_TOOL,
     )
 }
@@ -48,6 +50,7 @@ __all__ = [
     "DRAFT_CONTAINMENT_TOOL",
     "ENRICH_IOC_TOOL",
     "LOOKUP_MITRE_TOOL",
+    "QUERY_CASE_HISTORY_TOOL",
     "QUERY_VECTOR_LOGS_TOOL",
     "TOOL_REGISTRY",
     "SOCTool",

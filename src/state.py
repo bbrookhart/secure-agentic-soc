@@ -520,6 +520,17 @@ class SOCState(BaseModel):
     supervisor_turns: int = Field(default=0, ge=0)
     tool_calls_used: int = Field(default=0, ge=0)
 
+    # --- Cross-run context ------------------------------------------------
+    # Counts drawn from prior investigations touching the same entities.
+    # Structured values only: these reach the policy engine, which holds no
+    # free-text fields precisely so a poisoned history cannot become an
+    # injection channel into the one component that is not persuadable.
+    related_confirmed_malicious: int = Field(default=0, ge=0)
+    related_false_positives: int = Field(default=0, ge=0)
+    related_run_count: int = Field(default=0, ge=0)
+    case_id: str = ""
+    duplicate_of: str = ""
+
     # --- Human in the loop ------------------------------------------------
     requires_approval: bool = False
     approval_status: ApprovalStatus = ApprovalStatus.NOT_REQUIRED

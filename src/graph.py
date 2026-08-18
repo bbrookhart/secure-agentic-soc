@@ -336,6 +336,12 @@ def build_graph(
             state.approval_decision,
             state.approval_status,
             context,
+            case_context={
+                "related_run_count": state.related_run_count,
+                "related_confirmed_malicious": state.related_confirmed_malicious,
+                "related_false_positives": state.related_false_positives,
+                "case_id": state.case_id,
+            },
         )
         return {
             "final_report": report,
