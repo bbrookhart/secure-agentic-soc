@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.enums import AgentRole, AlertCategory, ApprovalStatus, Severity, Verdict
+from src.enums import AgentRole, AlertCategory, ApprovalStatus, IndicatorType, Severity, Verdict
 from src.memory import CaseStore, attach_case_context, entities_of, set_case_store
 from src.security.policy import PolicyEffect, PolicyInput, default_policy
 from src.state import (
@@ -19,7 +19,6 @@ from src.state import (
     SOCState,
     TriageResult,
 )
-from src.enums import IndicatorType
 
 
 @pytest.fixture
