@@ -149,6 +149,7 @@ flowchart LR
     ENR["🎯 <b>Enrichment</b>"] --> EI["enrich_ioc"]
     ENR --> LM["lookup_mitre"]
     ENR --> QL["query_vector_logs"]
+    ENR --> QC["query_case_history"]
     ENR --> DC["draft_containment_proposal<br/><i>disruptive · proposal only</i>"]
 
     classDef agent fill:#0D5D9F,stroke:#0D5D9F,color:#fff
@@ -157,7 +158,7 @@ flowchart LR
     classDef risky fill:#BF8700,stroke:#BF8700,color:#fff
     class SUP,TRI,ENR,REP agent
     class Z1,Z2 none
-    class CA,EI,LM,QL tool
+    class CA,EI,LM,QL,QC tool
     class DC risky
 ```
 
@@ -231,6 +232,8 @@ src/
 │   ├── identity.py    Principals and the capability matrix
 │   ├── policy.py      Deterministic HITL rules
 │   ├── audit.py       Hash-chained tamper-evident audit log
+│   ├── audit_sink.py  Where events land: local fsync + off-host forwarding
+│   ├── approval_identity.py  Proxy-verified approver; fails closed
 │   ├── sanitizer.py   Untrusted-content containment + injection heuristics
 │   ├── redaction.py   Secret scrubbing (known values + patterns)
 │   └── ratelimit.py   Token-bucket limiting
@@ -250,6 +253,14 @@ src/
 │   ├── enrichment.py  Evidence gathering + proposal derivation
 │   ├── reporter.py    Synthesis (zero tools, zero authority)
 │   └── baseline.py    Single ReAct agent, kept for comparison
+│
+├── memory/
+│   └── case_store.py  Cross-run history: dedup, correlation, analyst decisions
+│
+├── ingest/            ── the trust boundary ──
+│   ├── base.py        parse_alert: the one validator every source ends at
+│   ├── files.py       Sample alerts and watched directories
+│   └── siem.py        Elastic / Splunk / Sentinel polling adapters
 │
 ├── rag/
 │   ├── embeddings.py  TF-IDF (default) / Ollama backends

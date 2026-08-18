@@ -124,8 +124,13 @@ def main(argv: list[str] | None = None) -> int:
             "none in the design",
         ),
         (
-            "peak tools held by one principal",
+            "peak tools held at once",
             str(max(len(get_identity(r).allowed_tools) for r in supervisor_identities)),
+            str(len(get_identity(AgentRole.BASELINE).allowed_tools)),
+        ),
+        (
+            "tools held while writing up",
+            str(len(get_identity(AgentRole.REPORTER).allowed_tools)),
             str(len(get_identity(AgentRole.BASELINE).allowed_tools)),
         ),
         (
@@ -153,10 +158,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {label:<34} {left:<24} {right}")
 
     print(
-        "\n  The tool-count row is the blast radius of a successful injection: the most\n"
-        "  privileged supervisor principal holds fewer capabilities than the baseline\n"
-        "  holds for the entire run, and the reporter -- the component reading the most\n"
-        "  untrusted text -- holds none.\n"
+        "\n  The two tool rows are the blast radius of a successful injection, and the\n"
+        "  second is the one that matters. Peak capability is comparable -- enrichment\n"
+        "  holds a little more than the baseline does. The difference is *when*: the\n"
+        "  baseline holds its full set for the entire run, including while it writes the\n"
+        "  summary from everything it has read, whereas the reporter holds nothing at\n"
+        "  all. The component most exposed to untrusted text ends up with the least\n"
+        "  authority, which is not something a single-agent design can express.\n"
     )
     return 0
 

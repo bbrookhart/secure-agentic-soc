@@ -106,7 +106,7 @@ flowchart TB
     SUP{{"<b>SUPERVISOR</b><br/>evaluate policy · route · audit<br/><i>holds zero tools</i>"}}
 
     SUP -->|"R-010"| TRI["<b>TRIAGE</b><br/>severity · category<br/>confidence · ATT&CK<br/><br/>1 tool"]
-    SUP -->|"R-021"| ENR["<b>ENRICHMENT / HUNTER</b><br/>IOC reputation · ATT&CK<br/>log correlation · drafting<br/><br/>4 tools"]
+    SUP -->|"R-021 · R-022"| ENR["<b>ENRICHMENT / HUNTER</b><br/>IOC reputation · ATT&CK<br/>log correlation · case history<br/>drafting<br/><br/>5 tools"]
     SUP -->|"R-030"| HIL[["<b>⏸ HUMAN APPROVAL</b><br/>graph interrupt()<br/><i>execution suspends</i>"]]
     SUP -->|"R-040"| REP["<b>REPORTER</b><br/>incident synthesis<br/><br/><i>holds zero tools</i>"]
     SUP -->|"R-000 · R-002"| FIN(["✅ END"])
@@ -502,17 +502,21 @@ Five heuristics fired: `instruction_override` · `persona_switch` · `policy_eva
 
 ```
 src/
-├── security/     identity · policy · audit · sanitizer · redaction · ratelimit
+├── security/     identity · policy · audit · audit_sink · approval_identity
+│                 sanitizer · redaction · ratelimit
 ├── tools/        narrow schema-validated tools + the guarded broker
 ├── agents/       supervisor · triage · enrichment · reporter · baseline
+├── memory/       case store: dedup, cross-alert correlation, analyst decisions
+├── ingest/       the trust boundary: files, directories, Elastic/Splunk/Sentinel
 ├── rag/          TF-IDF / Ollama embeddings + ChromaDB store
 ├── ui/           Streamlit dashboard and approval console
 ├── state.py      typed state, phase machine, invariants
 └── graph.py      LangGraph assembly, checkpointing, HITL interrupt
 
+evals/            35 labelled alerts + scoring runner + baseline comparison
 data/             sample alerts · MITRE subset · threat intel · log corpus
 docs/             ARCHITECTURE.md · THREAT_MODEL.md
-tests/            109 tests, all offline
+tests/            170 tests, all offline
 ```
 
 > [!TIP]
@@ -524,6 +528,42 @@ tests/            109 tests, all offline
 
 ---
 
+## Measuring it
+
+Architecture claims are cheap. `make eval` runs 35 labelled alerts — 12 true positives,
+10 benign, 13 injection variants — and scores the pipeline against them.
+
+```
+make eval        # deterministic, ~2s, no model required
+make eval-llm    # same corpus through the configured model
+make compare     # supervisor vs. the single ReAct agent (needs Ollama)
+```
+
+The output separates two things that are usually muddled together:
+
+| | |
+|:--|:--|
+| **Metrics** | Severity, category and escalation accuracy. These move with the model. A lower number is a quality signal, not a failure. |
+| **Invariants** | No run completes past an approval it owed. Nothing is ever executable. Every audit chain verifies. No configuration reaches a report. A single breach is a defect whatever the metrics say — these set the exit code. |
+
+Three labelling decisions keep the suite from grading itself:
+
+- **Severity is a band, split by direction.** Under-calling is the failure that matters;
+  over-calling is analyst noise. Reporting one number would hide which is happening.
+- **`should_escalate` is a property of the alert, not of the policy.** It records whether a
+  human genuinely ought to see the incident. Scoring against the policy the system already
+  implements would pass by construction and could never surface a mistuned rule.
+- **The red-team suite keeps payloads the detector cannot catch** — mixed-script look-alikes,
+  Spanish, and manipulation containing no instruction-shaped text at all. Containment is
+  scored as *"a human saw it"*, not *"the regex matched"*, because that is the claim the
+  architecture actually makes. A test asserts these known misses stay in the corpus.
+
+Current deterministic baseline: **all invariants hold**, injection containment **100%**
+including the three cases the heuristics miss, severity in band **86%** with **3%**
+under-called, category accuracy **49%**, **0** missed escalations.
+
+---
+
 ## Known limitations and residual risk
 
 > [!WARNING]
@@ -532,9 +572,11 @@ tests/            109 tests, all offline
 
 | Limitation | Impact |
 |:--|:--|
-| **Audit chain is tamper-evident, not tamper-proof** | An attacker with file write access *and* code execution can recompute it. Production needs append-only external storage. **This is the largest gap.** |
-| **No authentication** | Anyone who can reach port 8501 can approve incidents. Compose binds it to loopback; do not expose without an authenticating proxy. |
-| **Injection heuristics are pattern-based** | Will miss novel phrasing, other languages, and semantic manipulation containing no instruction-shaped text. A miss degrades to least privilege + the policy gate rather than to compromise. |
+| **The local audit chain is still rewritable** | It is tamper-*evident*: an attacker with file write and code execution can recompute it and leave it consistent. Set `SOC_AUDIT_FORWARD_URL` or `SOC_AUDIT_SYSLOG_ADDRESS` so every event also lands somewhere this host cannot rewrite — a later local edit then makes the two copies disagree. Unforwarded, this remains the largest gap. |
+| **Console authentication is delegated, not implemented** | Streamlit has none of its own. The approval gate reads a proxy-asserted identity and fails closed without it, but that is only as good as the deployment: the proxy must strip the header from inbound requests, and the app must be reachable only through it. `make ui` and the compose stack opt out explicitly for local use, and decisions taken that way are recorded as `unauthenticated`. |
+| **Injection heuristics are pattern-based** | Will miss novel phrasing, other languages, and semantic manipulation containing no instruction-shaped text. Three such cases are in the eval corpus (`INJ-006`, `INJ-007`, `INJ-008`) and are *measured*, not assumed: they defeat the detector and are still contained, because a miss degrades to least privilege and the policy gate rather than to compromise. |
+| **Rule-based triage is weak on category** | With the model switched off, category accuracy is 49% against the labelled corpus while severity stays in band 86% of the time. The deterministic floor is a floor, not a substitute — but it fails safe: 0 missed escalations, and 3 over-escalations across 35 cases. Run `make eval` for the current numbers. |
+| **Correlation is entity-exact** | Alerts are linked by exact asset name, IP or indicator match. An attacker who moves to a differently-named host breaks the link, and there is no fuzzy or behavioural correlation. |
 | **Default retrieval is lexical, not semantic** | TF-IDF matches *"powershell encoded command"* but not *"obfuscated script execution"*. Set `SOC_EMBEDDING_BACKEND=ollama` for genuine semantic recall. |
 | **Small models produce mediocre analysis** | `llama3.2` (3B) writes confident prose around thin reasoning. The deterministic controls hold regardless, but quality scales with model size. |
 | **Synthetic intel and log corpus** | Deliberately limited coverage. Unknown indicators are reported as *UNKNOWN, not benign*. |
