@@ -36,6 +36,8 @@ from evals.cases import EvalCase, load_cases
 from src.enums import ApprovalStatus, Severity
 from src.graph import build_graph, build_memory_checkpointer, pending_interrupt
 from src.memory import CaseStore, attach_case_context, record_run, set_case_store
+from src.model_provenance import resolve_model_provenance
+from src.prompts import manifest_hash
 from src.security.audit import AuditLogger, verify_chain
 from src.state import Phase, SOCState
 from src.tools import build_broker
@@ -351,6 +353,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.json_path:
         payload = {
             "mode": mode,
+            # Provenance of the numbers. Quality results describe a specific
+            # set of weights and a specific set of prompts; citing them after
+            # either changed would be describing a system that no longer
+            # exists. evals/summary.py flags the mismatch.
+            "prompt_manifest": manifest_hash(),
+            "model_digest": resolve_model_provenance().short_digest,
             "summary": summary,
             "cases": [
                 {

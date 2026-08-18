@@ -41,6 +41,14 @@ class Settings(BaseSettings):
         default="llama3.2",
         description="Chat model used by every agent. Must support tool/structured output.",
     )
+    # A model tag is mutable: "llama3.2" re-pulled can be different weights
+    # with different judgement, and nothing would notice. Pin the digest and
+    # a mismatch is refused; leave it unset and the observed digest is still
+    # audited, which is what makes pinning possible later.
+    ollama_model_digest: str | None = Field(
+        default=None,
+        description="Expected model digest (prefix match). Unset observes without enforcing.",
+    )
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     llm_timeout_seconds: int = Field(default=120, ge=5, le=600)
     llm_num_ctx: int = Field(default=8192, ge=2048)

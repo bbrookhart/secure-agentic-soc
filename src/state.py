@@ -43,6 +43,13 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def _prompt_manifest_hash() -> str:
+    """Fingerprint of the prompt set this run used."""
+    from src.prompts import manifest_hash
+
+    return manifest_hash()
+
+
 class InvalidStateTransition(ValueError):
     """Raised when a node attempts a phase transition the workflow forbids."""
 
@@ -488,6 +495,10 @@ class RunMetadata(BaseModel):
     # Who started this investigation. Recorded so the approval gate can
     # refuse to let the same person sign off their own run (AC-5).
     initiated_by: str = ""
+    # Provenance of the judgement: which weights, which prompts. Both are
+    # mutable in ways a tag name does not capture.
+    model_digest: str = ""
+    prompt_manifest: str = ""
 
     @property
     def duration_seconds(self) -> float | None:
@@ -611,6 +622,7 @@ class SOCState(BaseModel):
         model_name: str = "unknown",
         offline_mode: bool = False,
         initiated_by: str = "",
+        model_digest: str = "",
     ) -> SOCState:
         """Create the initial state for a new investigation."""
         resolved_thread = thread_id or f"run-{uuid.uuid4().hex[:12]}"
@@ -622,5 +634,7 @@ class SOCState(BaseModel):
                 offline_mode=offline_mode,
                 alert_fingerprint=alert.fingerprint(),
                 initiated_by=initiated_by,
+                model_digest=model_digest,
+                prompt_manifest=_prompt_manifest_hash(),
             ),
         )

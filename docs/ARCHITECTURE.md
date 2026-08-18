@@ -256,6 +256,9 @@ src/
 │   ├── reporter.py    Synthesis (zero tools, zero authority)
 │   └── baseline.py    Single ReAct agent, kept for comparison
 │
+├── prompts/           Versioned, hashed prompts; a change is a reviewed diff
+├── model_provenance.py  Which weights served the run; optional digest pin
+│
 ├── observability/     ── operations, NOT evidence ──
 │   ├── telemetry.py   OTel setup + the closed attribute vocabulary
 │   ├── metrics.py     Golden signals plus the security-specific ones

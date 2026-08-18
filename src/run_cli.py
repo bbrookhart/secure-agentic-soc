@@ -24,6 +24,7 @@ from src.enums import AgentRole, AuditAction
 from src.graph import build_checkpointer, build_graph, pending_interrupt
 from src.ingest import AlertIngestError, list_sample_alerts, resolve_alert
 from src.memory import DEDUP_WINDOW, attach_case_context, record_run
+from src.model_provenance import ModelIntegrityError, verify_model
 from src.observability import metrics
 from src.security.audit import get_audit_logger, verify_chain
 from src.security.identity import capability_matrix
@@ -222,6 +223,9 @@ def _print_summary(state: SOCState) -> None:
     print(f"  Final phase      : {state.phase.value}")
     print(f"  Agents run       : {', '.join(state.completed_agents) or '(none)'}")
     print(f"  Supervisor turns : {state.supervisor_turns}")
+    print(f"  Model            : {state.run.model_name}"
+          + (f" @{state.run.model_digest}" if state.run.model_digest else ""))
+    print(f"  Prompts          : {state.run.prompt_manifest}")
     print(f"  Tool calls       : {state.tool_calls_used}")
     print(f"  Approval         : {state.approval_status.value}"
           + (f" ({state.approval_rule_id})" if state.approval_rule_id else ""))
@@ -260,6 +264,17 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"  Model    : {settings.ollama_model} "
           f"{_c('[OFFLINE MODE -- deterministic fallbacks]', YELLOW) if settings.offline_mode else ''}")
 
+    # Which weights are actually serving? A tag is mutable, so this is
+    # recorded on every run and refused outright when a digest is pinned.
+    try:
+        provenance = verify_model(audit=get_audit_logger())
+    except ModelIntegrityError as exc:
+        print(_c(f"error: {exc}", RED), file=sys.stderr)
+        return 2
+    if provenance.available:
+        print(f"  Digest   : {provenance.short_digest}"
+              + (" [pinned]" if provenance.pinned else ""))
+
     checkpointer = build_memory() if args.ephemeral else build_checkpointer()
     graph = build_graph(checkpointer=checkpointer, consult_llm=not settings.offline_mode)
 
@@ -269,6 +284,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         model_name=settings.ollama_model,
         offline_mode=settings.offline_mode,
         initiated_by=args.analyst,
+        model_digest=provenance.short_digest,
     )
     # What has this environment seen before? Attached once, before the graph
     # starts, so the policy engine can consider it from the first turn.

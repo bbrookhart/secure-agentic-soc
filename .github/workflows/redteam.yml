@@ -1,0 +1,66 @@
+# Scheduled red-teaming of the injection defences.
+#
+# The pattern list in src/security/sanitizer.py is DETECTION CONTENT, not a
+# solved problem. Detection content decays: payloads that were novel when it was
+# written become common, and new phrasings appear that it has never seen. Content
+# nobody revisits is content that quietly stops working, which is why this runs on
+# a schedule rather than only on pull requests.
+#
+# The gate is CONTAINMENT, not DETECTION. Three corpus cases (INJ-006 mixed
+# script, INJ-007 Spanish, INJ-008 purely semantic) defeat the heuristics on
+# purpose and must still reach a human. If detection drops, that is a finding to
+# investigate. If containment drops, the architecture's central claim has broken
+# and the build fails.
+
+name: Red team
+
+on:
+  schedule:
+    # Weekly, Monday 06:00 UTC.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+  pull_request:
+    # Changes to the detection content or the corpus re-run it immediately.
+    paths:
+      - "src/security/sanitizer.py"
+      - "evals/corpus/injection.json"
+      - "src/prompts/**"
+
+permissions:
+  contents: read
+
+jobs:
+  injection:
+    name: Injection containment
+    runs-on: ubuntu-latest
+    env:
+      SOC_OFFLINE_MODE: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # Fails on any injection case that completes without reaching a human,
+      # regardless of whether the pattern detector saw it.
+      - name: Containment must hold
+        run: python -m evals.runner --only INJ --json redteam-report.json
+
+      - name: Detection rate (reported, not enforced)
+        if: always()
+        run: python -m evals.summary redteam-report.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: redteam-report
+          path: redteam-report.json
+          retention-days: 180

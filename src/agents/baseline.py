@@ -37,30 +37,16 @@ from typing import Any
 
 from langchain_core.tools import StructuredTool
 
-from src.agents.base import SECURITY_PREAMBLE, AgentContext, render_alert_for_prompt
+from src.agents.base import AgentContext, render_alert_for_prompt
 from src.enums import AgentRole, AuditAction
+from src.prompts import BASELINE as _BASELINE
+from src.prompts import with_preamble
 from src.security.audit import AuditEvent, get_audit_logger
 from src.state import SecurityAlert
 from src.tools import TOOL_REGISTRY, build_broker
 from src.tools.base import ToolBroker
 
-BASELINE_SYSTEM_PROMPT = (
-    SECURITY_PREAMBLE
-    + """
-You are a single SOC analyst agent investigating one alert end to end.
-
-Work through the investigation yourself:
-1. Classify the alert with classify_alert.
-2. Enrich every indicator with enrich_ioc.
-3. Map the behaviour to ATT&CK with lookup_mitre.
-4. Correlate against history with query_vector_logs.
-5. Write a final incident summary: verdict, severity, key findings, ATT&CK techniques and
-   recommended next steps for a human analyst.
-
-Call tools one at a time and use their results. When you have enough evidence, stop calling
-tools and write the final summary.
-"""
-)
+BASELINE_SYSTEM_PROMPT = with_preamble(_BASELINE)
 
 
 def build_langchain_tools(broker: ToolBroker, thread_id: str) -> list[StructuredTool]:

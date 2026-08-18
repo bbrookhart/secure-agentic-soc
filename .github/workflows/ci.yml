@@ -84,9 +84,15 @@ jobs:
       - name: Evaluate against the labelled corpus
         run: python -m evals.runner --json eval-report.json
 
+      # Compared against the committed baseline, which also records the prompt
+      # manifest and model digest that produced it. If either changed, the
+      # summary says so before any delta is read -- the baseline describes a
+      # system that no longer exists.
       - name: Publish quality metrics to the job summary
         if: always()
-        run: python -m evals.summary eval-report.json >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          python -m evals.summary eval-report.json \
+            --baseline evals/baselines/offline.json >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload evaluation report
         if: always()

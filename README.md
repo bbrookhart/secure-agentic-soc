@@ -15,7 +15,7 @@ or reach a capability it was never granted.
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Supervisor-1C3C3C?style=flat-square)](https://langchain-ai.github.io/langgraph/)
 [![Ollama](https://img.shields.io/badge/Ollama-Local_Inference-000000?style=flat-square&logo=ollama&logoColor=white)](https://ollama.com)
-[![Tests](https://img.shields.io/badge/tests-255_passing-3FB950?style=flat-square)](tests/)
+[![Tests](https://img.shields.io/badge/tests-273_passing-3FB950?style=flat-square)](tests/)
 [![Type checked](https://img.shields.io/badge/mypy-strict-2A6DB0?style=flat-square)](pyproject.toml)
 
 [![Local first](https://img.shields.io/badge/🔒_Local_first-no_data_egress-0969DA?style=flat-square)](#security-controls)
@@ -539,7 +539,7 @@ evals/            35 labelled alerts + scoring runner + baseline comparison
 scripts/          supply-chain tooling (dependency audit wrapper)
 data/             sample alerts · MITRE subset · threat intel · log corpus
 docs/             ARCHITECTURE.md · THREAT_MODEL.md
-tests/            255 tests, all offline
+tests/            273 tests, all offline
 ```
 
 > [!TIP]
@@ -603,6 +603,7 @@ under-called, category accuracy **49%**, **0** missed escalations.
 | **Telemetry is an egress path** | Metrics and traces are off by default. When enabled, the attribute vocabulary is closed and tested — severity, rule id, tool name, outcome — so alert ids, hostnames and free text cannot reach a collector. Widening `ALLOWED_ATTRIBUTES` is a reviewed change, not a convenience. |
 | **Correlation is entity-exact** | Alerts are linked by exact asset name, IP or indicator match. An attacker who moves to a differently-named host breaks the link, and there is no fuzzy or behavioural correlation. |
 | **Default retrieval is lexical, not semantic** | TF-IDF matches *"powershell encoded command"* but not *"obfuscated script execution"*. Set `SOC_EMBEDDING_BACKEND=ollama` for genuine semantic recall. |
+| **Model and prompt changes are governed, not prevented** | A tag is mutable, so the serving digest is recorded on every run and can be pinned (`SOC_OLLAMA_MODEL_DIGEST`) to refuse a swap. Prompts are versioned and hashed, and the eval baseline records which set produced it — but nothing stops a deployment running unpinned prompts against unevaluated weights if an operator chooses to. |
 | **Small models produce mediocre analysis** | `llama3.2` (3B) writes confident prose around thin reasoning. The deterministic controls hold regardless, but quality scales with model size. |
 | **Checkpoint store is integrity-sensitive** | Whoever can write `state/checkpoints.sqlite` controls what gets deserialised on the next resume. Upgrading past `PYSEC-2026-1527` and the msgpack allowlist in `graph.py` close the known execution paths, but the volume still needs the same protection as the audit log. |
 | **Synthetic intel and log corpus** | Deliberately limited coverage. Unknown indicators are reported as *UNKNOWN, not benign*. |

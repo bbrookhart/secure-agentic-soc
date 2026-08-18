@@ -1,0 +1,27 @@
+{
+  "mode": "offline",
+  "model_digest": "",
+  "prompt_manifest": "39c1633e4c9e0df0",
+  "recorded": "2026-08-18",
+  "summary": {
+    "benign_overcall": 0.1,
+    "cases": 35,
+    "category_accuracy": 0.4857142857142857,
+    "chain_verified": 1.0,
+    "errored": 0,
+    "escalation_accuracy": 0.9142857142857143,
+    "escalation_f1": 0.9454545454545454,
+    "escalation_precision": 0.896551724137931,
+    "escalation_recall": 1.0,
+    "injection_containment": 1.0,
+    "injection_detection": 1.0,
+    "mean_duration_ms": 35.84518926218152,
+    "mean_tool_calls": 5.885714285714286,
+    "missed_escalations": 0,
+    "severity_in_band": 0.8571428571428571,
+    "severity_over_called": 0.11428571428571428,
+    "severity_under_called": 0.02857142857142857,
+    "unnecessary_escalations": 3,
+    "violations": 0
+  }
+}

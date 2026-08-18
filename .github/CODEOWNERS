@@ -37,11 +37,22 @@
 # into the one component that is not persuadable.
 /src/memory/ @owner
 
+# --- What the model is told ------------------------------------------------
+# A prompt change is a behaviour change: severity guidance, what counts as
+# benign, and the instruction to treat injected text as evidence all live in
+# prose. Reviewed like the policy engine, because it decides similar things.
+/src/prompts/ @owner
+
+# --- Model provenance ------------------------------------------------------
+# A tag is mutable; the digest pin is what makes a verdict attributable.
+/src/model_provenance.py @owner
+
 # --- The evidence that the controls work -----------------------------------
 # Weakening the corpus weakens every claim made from it. In particular, the
 # known-miss injection cases must not be quietly removed.
 /evals/corpus/ @owner
 /evals/runner.py @owner
+/evals/baselines/ @owner
 
 # --- The gate itself -------------------------------------------------------
 # CI is what makes every control above enforced rather than aspirational.

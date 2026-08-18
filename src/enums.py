@@ -162,5 +162,8 @@ class AuditAction(str, Enum):
     # A signed statement of where the chain stood, forwarded off-host so a
     # later local rewrite has something it cannot retract to disagree with.
     AUDIT_ANCHOR = "audit_anchor"
+    # Which weights and which prompts produced this run. A tag is mutable;
+    # the digest is what makes a verdict attributable months later.
+    MODEL_VERIFIED = "model_verified"
     STATE_TRANSITION = "state_transition"
     ERROR = "error"

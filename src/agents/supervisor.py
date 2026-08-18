@@ -26,7 +26,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
-from src.agents.base import SECURITY_PREAMBLE, AgentContext
+from src.agents.base import AgentContext
 from src.enums import (
     AgentRole,
     AlertCategory,
@@ -37,6 +37,8 @@ from src.enums import (
 )
 from src.llm import structured_completion
 from src.observability import metrics
+from src.prompts import SUPERVISOR as _SUPERVISOR
+from src.prompts import with_preamble
 from src.security.audit import AuditEvent
 from src.security.policy import ApprovalPolicy, PolicyDecision, PolicyInput
 from src.state import Phase, SOCState
@@ -73,24 +75,7 @@ class SupervisorLLMOutput(BaseModel):
     reason: str = Field(max_length=600, description="One or two sentences justifying the choice.")
 
 
-SUPERVISOR_SYSTEM_PROMPT = (
-    SECURITY_PREAMBLE
-    + """
-You are the SUPERVISOR of a SOC investigation pipeline. You will be shown the current state of \
-an investigation and asked which step should run next.
-
-Available steps:
-- triage: produce the initial structured assessment. Must happen first.
-- enrichment: enrich indicators, map ATT&CK techniques, correlate historical logs.
-- human_approval: pause for a human analyst to review before continuing.
-- reporter: write the final incident report.
-- finish: the investigation is complete.
-
-IMPORTANT: your answer is ADVISORY. A deterministic policy engine makes the actual routing \
-decision and will override you if you are wrong. Answer honestly rather than strategically; \
-your reasoning is recorded for audit and for comparison against the policy engine.
-"""
-)
+SUPERVISOR_SYSTEM_PROMPT = with_preamble(_SUPERVISOR)
 
 
 def build_policy_input(state: SOCState, *, max_tool_calls: int) -> PolicyInput:

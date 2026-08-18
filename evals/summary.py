@@ -92,6 +92,22 @@ def render(report: dict[str, Any], baseline: dict[str, Any] | None = None) -> st
         "",
     ]
 
+    # A prompt or model change invalidates the comparison before any metric
+    # is read: the baseline describes a system that no longer exists.
+    if baseline:
+        drifted = [
+            name
+            for name, key in (("prompts", "prompt_manifest"), ("model", "model_digest"))
+            if report.get(key) and baseline.get(key) and report[key] != baseline[key]
+        ]
+        if drifted:
+            lines += [
+                "> [!IMPORTANT]",
+                f"> **The {' and '.join(drifted)} changed since the baseline.** The deltas below "
+                "compare different systems. Re-baseline before citing these numbers as current.",
+                "",
+            ]
+
     # --- Invariants: the gate ------------------------------------------
     if violations or errored:
         lines += [

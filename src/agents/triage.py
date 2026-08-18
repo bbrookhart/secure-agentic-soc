@@ -29,7 +29,6 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from src.agents.base import (
-    SECURITY_PREAMBLE,
     AgentContext,
     alert_summary_text,
     contain_alert,
@@ -37,31 +36,12 @@ from src.agents.base import (
 from src.enums import AgentRole, AlertCategory, AuditAction, Severity
 from src.llm import structured_completion
 from src.observability import metrics
+from src.prompts import TRIAGE as _TRIAGE
+from src.prompts import with_preamble
 from src.security.audit import AuditEvent
 from src.state import SecurityAlert, TriageResult
 
-TRIAGE_SYSTEM_PROMPT = (
-    SECURITY_PREAMBLE
-    + """
-You are the TRIAGE analyst. Your job is the first structured assessment of one alert.
-
-You will receive the alert and a deterministic rule-based classification of it. Review both \
-and produce your own assessment.
-
-Guidance:
-- Severity reflects potential business impact if the activity is real: critical (active \
-destruction, confirmed mass compromise), high (confirmed malicious activity on important \
-assets), medium (suspicious, needs investigation), low (minor or well-contained), info \
-(no security relevance).
-- If the evidence indicates a benign explanation -- a known VPN range, an approved change, \
-an already-blocked action -- say so plainly and lower the severity.
-- If you disagree with the rule-based classification, explain specifically why.
-- suggested_techniques must be MITRE ATT&CK IDs in the form T1234 or T1234.001. Only suggest \
-techniques the evidence actually supports; the hunter will verify them.
-- confidence expresses how sure you are, from 0.0 to 1.0. Be honest: low confidence routes \
-the alert to a human, which is the correct outcome when the evidence is thin.
-"""
-)
+TRIAGE_SYSTEM_PROMPT = with_preamble(_TRIAGE)
 
 
 class TriageLLMOutput(BaseModel):
