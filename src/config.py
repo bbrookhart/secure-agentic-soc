@@ -183,6 +183,18 @@ class Settings(BaseSettings):
         ),
     )
 
+    # --- Observability ---------------------------------------------------
+    # Off by default. Telemetry is an egress path and the data here is
+    # incident data, so switching it on is a decision -- see
+    # src/observability/telemetry.py for the label discipline that keeps
+    # alert content out of it.
+    telemetry_enabled: bool = Field(default=False)
+    telemetry_endpoint: str | None = Field(
+        default=None,
+        description="OTLP/gRPC collector. Unset records in-process without exporting.",
+    )
+    app_version: str = Field(default="0.1.0")
+
     # --- Optional secrets (never placed in prompts) ----------------------
     # Present to demonstrate correct secret handling; the shipped tools are all
     # offline and do not require credentials.

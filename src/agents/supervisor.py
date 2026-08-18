@@ -36,6 +36,7 @@ from src.enums import (
     Severity,
 )
 from src.llm import structured_completion
+from src.observability import metrics
 from src.security.audit import AuditEvent
 from src.security.policy import ApprovalPolicy, PolicyDecision, PolicyInput
 from src.state import Phase, SOCState
@@ -278,6 +279,9 @@ def run_supervisor(
     # reconfigured limit cannot leave policy and enforcement disagreeing.
     policy_input = build_policy_input(state, max_tool_calls=context.broker.max_calls_per_run)
     policy_decision = policy.evaluate(policy_input)
+    metrics.policy_decision(
+        effect=policy_decision.effect.value, rule_id=policy_decision.rule_id
+    )
     events.append(
         context.log(
             AuditAction.POLICY_EVALUATED,

@@ -36,6 +36,7 @@ from src.agents.base import (
 )
 from src.enums import AgentRole, AlertCategory, AuditAction, Severity
 from src.llm import structured_completion
+from src.observability import metrics
 from src.security.audit import AuditEvent
 from src.state import SecurityAlert, TriageResult
 
@@ -132,6 +133,7 @@ def run_triage(alert: SecurityAlert, context: AgentContext) -> tuple[TriageResul
     contained_alert = contain_alert(alert)
     alert_flags = contained_alert.injection_flags
     if alert_flags:
+        metrics.injection_detected(source="alert")
         events.append(
             context.log(
                 AuditAction.UNTRUSTED_CONTENT_FLAGGED,

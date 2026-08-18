@@ -15,7 +15,7 @@ or reach a capability it was never granted.
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Supervisor-1C3C3C?style=flat-square)](https://langchain-ai.github.io/langgraph/)
 [![Ollama](https://img.shields.io/badge/Ollama-Local_Inference-000000?style=flat-square&logo=ollama&logoColor=white)](https://ollama.com)
-[![Tests](https://img.shields.io/badge/tests-236_passing-3FB950?style=flat-square)](tests/)
+[![Tests](https://img.shields.io/badge/tests-255_passing-3FB950?style=flat-square)](tests/)
 [![Type checked](https://img.shields.io/badge/mypy-strict-2A6DB0?style=flat-square)](pyproject.toml)
 
 [![Local first](https://img.shields.io/badge/🔒_Local_first-no_data_egress-0969DA?style=flat-square)](#security-controls)
@@ -536,9 +536,10 @@ src/
 └── graph.py      LangGraph assembly, checkpointing, HITL interrupt
 
 evals/            35 labelled alerts + scoring runner + baseline comparison
+scripts/          supply-chain tooling (dependency audit wrapper)
 data/             sample alerts · MITRE subset · threat intel · log corpus
 docs/             ARCHITECTURE.md · THREAT_MODEL.md
-tests/            236 tests, all offline
+tests/            255 tests, all offline
 ```
 
 > [!TIP]
@@ -599,6 +600,7 @@ under-called, category accuracy **49%**, **0** missed escalations.
 | **Single-operator deployments cannot separate duties** | AC-5 requires that whoever starts a run not approve it. With one operator at a CLI those are the same person, so `SOC_REQUIRE_SEPARATION_OF_DUTIES=false` is needed — a real reduction in control, made deliberately rather than by default. |
 | **Injection heuristics are pattern-based** | Will miss novel phrasing, other languages, and semantic manipulation containing no instruction-shaped text. Three such cases are in the eval corpus (`INJ-006`, `INJ-007`, `INJ-008`) and are *measured*, not assumed: they defeat the detector and are still contained, because a miss degrades to least privilege and the policy gate rather than to compromise. |
 | **Rule-based triage is weak on category** | With the model switched off, category accuracy is 49% against the labelled corpus while severity stays in band 86% of the time. The deterministic floor is a floor, not a substitute — but it fails safe: 0 missed escalations, and 3 over-escalations across 35 cases. Run `make eval` for the current numbers. |
+| **Telemetry is an egress path** | Metrics and traces are off by default. When enabled, the attribute vocabulary is closed and tested — severity, rule id, tool name, outcome — so alert ids, hostnames and free text cannot reach a collector. Widening `ALLOWED_ATTRIBUTES` is a reviewed change, not a convenience. |
 | **Correlation is entity-exact** | Alerts are linked by exact asset name, IP or indicator match. An attacker who moves to a differently-named host breaks the link, and there is no fuzzy or behavioural correlation. |
 | **Default retrieval is lexical, not semantic** | TF-IDF matches *"powershell encoded command"* but not *"obfuscated script execution"*. Set `SOC_EMBEDDING_BACKEND=ollama` for genuine semantic recall. |
 | **Small models produce mediocre analysis** | `llama3.2` (3B) writes confident prose around thin reasoning. The deterministic controls hold regardless, but quality scales with model size. |

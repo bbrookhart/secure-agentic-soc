@@ -32,6 +32,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from src.enums import ActionRisk, AgentRole, AuditAction
+from src.observability import metrics
 from src.security.audit import AuditEvent, AuditLogger, get_audit_logger
 from src.security.identity import AuthorizationError, get_identity
 from src.security.ratelimit import RateLimiter, RateLimitExceeded
@@ -171,6 +172,7 @@ class ToolBroker:
                     duration_ms=(time.perf_counter() - started) * 1000,
                 )
             )
+            metrics.tool_call(tool=tool_name, outcome=_outcome_of(action))
             return ToolResult(
                 tool=tool_name,
                 ok=False,
@@ -320,6 +322,9 @@ class ToolBroker:
             )
         )
 
+        metrics.tool_call(tool=tool_name, outcome="ok", duration_ms=duration_ms)
+        if flags:
+            metrics.injection_detected(source="tool")
         return ToolResult(
             tool=tool_name,
             ok=True,
@@ -328,6 +333,15 @@ class ToolBroker:
             injection_flags=flags,
             audit_events=events,
         )
+
+
+def _outcome_of(action: AuditAction) -> str:
+    """Map a denial action onto the bounded metric vocabulary."""
+    if action is AuditAction.RATE_LIMITED:
+        return "rate_limited"
+    if action is AuditAction.TOOL_DENIED:
+        return "denied"
+    return "error"
 
 
 def _summarise(data: Any) -> str:

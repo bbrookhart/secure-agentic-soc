@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from typing import Any
 
 from src.config import get_settings
@@ -23,6 +24,7 @@ from src.enums import AgentRole, AuditAction
 from src.graph import build_checkpointer, build_graph, pending_interrupt
 from src.ingest import AlertIngestError, list_sample_alerts, resolve_alert
 from src.memory import DEDUP_WINDOW, attach_case_context, record_run
+from src.observability import metrics
 from src.security.audit import get_audit_logger, verify_chain
 from src.security.identity import capability_matrix
 from src.security.policy import default_policy
@@ -82,6 +84,26 @@ def cmd_policy() -> int:
     return 0
 
 
+def cmd_health() -> int:
+    """Readiness, in the sense of "can this system triage an alert safely".
+
+    Exit 0 ready, 1 critical. Degraded is still ready on purpose: taking an
+    instance out of rotation because the model is down would turn reduced
+    analysis quality into an outage, and the deterministic floor exists so
+    that is unnecessary.
+    """
+    from src.observability.health import readiness, render
+
+    _header("Readiness")
+    ready, checks = readiness()
+    print(render(checks))
+
+    degraded = [c for c in checks if c.status == "degraded"]
+    status = _c("READY", GREEN) if ready else _c("NOT READY", RED)
+    print(f"\n  Status : {status}" + (f" ({len(degraded)} degraded)" if degraded else ""))
+    return 0 if ready else 1
+
+
 def cmd_verify_audit(thread_id: str) -> int:
     _header(f"Audit chain verification: {thread_id}")
     logger = get_audit_logger()
@@ -91,6 +113,7 @@ def cmd_verify_audit(thread_id: str) -> int:
         return 1
 
     ok, message = verify_chain(events, public_key_pem=logger.public_key_pem())
+    metrics.chain_verified(outcome="ok" if ok else "failed")
     status = _c("VERIFIED", GREEN) if ok else _c("TAMPERING DETECTED", RED)
     anchors = [e for e in events if e.action.value == "audit_anchor"]
     print(f"  Events : {len(events)}")
@@ -284,6 +307,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         },
     )
 
+    metrics.run_started(offline=settings.offline_mode)
+    run_started_at = time.perf_counter()
+
     payload: Any = initial
     while True:
         result = graph.invoke(payload, config=config)
@@ -311,6 +337,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     # it cannot retract to disagree with.
     audit.anchor(final_state.run.thread_id)
 
+    metrics.run_completed(
+        phase=final_state.phase.value,
+        verdict=final_state.final_report.verdict.value if final_state.final_report else "",
+        duration_ms=(time.perf_counter() - run_started_at) * 1000,
+    )
     audit.record(
         thread_id=final_state.run.thread_id,
         actor=AgentRole.SUPERVISOR,
@@ -353,6 +384,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--alert", "-a", help="Alert file path or sample name (e.g. alert-001-ransomware).")
     parser.add_argument("--list", "-l", action="store_true", help="List bundled sample alerts.")
     parser.add_argument("--policy", action="store_true", help="Show approval policy and capability matrix.")
+    parser.add_argument("--health", action="store_true", help="Run readiness checks and exit.")
     parser.add_argument("--verify-audit", metavar="THREAD_ID", help="Verify the audit hash chain for a run.")
     parser.add_argument("--thread-id", help="Explicit thread id (resumes an existing run if it exists).")
     parser.add_argument("--offline", action="store_true", help="Force deterministic mode with no LLM calls.")
@@ -381,6 +413,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_list()
     if args.policy:
         return cmd_policy()
+    if args.health:
+        return cmd_health()
     if args.verify_audit:
         return cmd_verify_audit(args.verify_audit)
     if args.alert:

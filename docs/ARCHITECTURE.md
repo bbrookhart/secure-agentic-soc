@@ -256,6 +256,11 @@ src/
 │   ├── reporter.py    Synthesis (zero tools, zero authority)
 │   └── baseline.py    Single ReAct agent, kept for comparison
 │
+├── observability/     ── operations, NOT evidence ──
+│   ├── telemetry.py   OTel setup + the closed attribute vocabulary
+│   ├── metrics.py     Golden signals plus the security-specific ones
+│   └── health.py      Readiness: critical vs degraded
+│
 ├── memory/
 │   └── case_store.py  Cross-run history: dedup, correlation, analyst decisions
 │

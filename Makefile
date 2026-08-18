@@ -62,6 +62,9 @@ sbom:  ## Generate a CycloneDX SBOM for the current environment
 	$(PYTHON) -m cyclonedx_py environment --output-format JSON --outfile sbom.json
 	@echo "wrote sbom.json"
 
+health:  ## Readiness checks (can this system triage an alert safely?)
+	$(PYTHON) -m src.run_cli --health
+
 policy:  ## Print the approval policy and agent capability matrix
 	$(PYTHON) -m src.run_cli --policy
 

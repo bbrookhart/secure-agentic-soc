@@ -45,6 +45,7 @@ from src.agents.reporter import run_reporter
 from src.agents.supervisor import Route, run_supervisor
 from src.agents.triage import run_triage
 from src.enums import AgentRole, ApprovalStatus, AuditAction
+from src.observability import metrics
 from src.security.audit import AuditLogger, get_audit_logger
 from src.security.authz import ApprovalContext, authorize_approval, required_approvals
 from src.security.policy import ApprovalPolicy, default_policy
@@ -171,6 +172,9 @@ def build_graph(
                     "approval_request": request,
                 }
             )
+            metrics.approval_requested(
+                rule_id=policy_decision.rule_id, severity=request.severity.value
+            )
             updates["audit_log"] = events + [
                 audit_logger.record(
                     thread_id=state.run.thread_id,
@@ -295,6 +299,7 @@ def build_graph(
         if decision.approved:
             authorization = authorize_approval(_approval_context(state, decision))
             if not authorization.allowed:
+                metrics.authorization_denied(rule_id=authorization.rule_id)
                 denial = audit_logger.record(
                     thread_id=state.run.thread_id,
                     actor=AgentRole.HUMAN_ANALYST,
@@ -400,6 +405,7 @@ def build_graph(
 
         status = ApprovalStatus.APPROVED if approved else ApprovalStatus.REJECTED
         target_phase = Phase.APPROVED if approved else Phase.REJECTED
+        metrics.approval_decided(outcome="approved" if approved else "rejected")
 
         event = audit_logger.record(
             thread_id=state.run.thread_id,

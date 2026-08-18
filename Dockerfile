@@ -65,8 +65,12 @@ RUN mkdir -p /app/state && chown -R soc:soc /app/state
 USER soc
 EXPOSE 8501
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=3).status==200 else 1)"
+# Asks whether this system can triage an alert safely -- writable state, a
+# usable audit path, a signing key that is not world-readable -- not merely
+# whether Streamlit is listening. A process with an unwritable audit volume
+# would pass the latter happily while running investigations unrecorded.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+  CMD python -m src.run_cli --health || exit 1
 
 CMD ["streamlit", "run", "src/ui/app.py", \
      "--server.address=0.0.0.0", \

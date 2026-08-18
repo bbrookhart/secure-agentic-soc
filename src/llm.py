@@ -26,6 +26,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel
 
 from src.enums import AgentRole, AuditAction
+from src.observability import metrics
 from src.security.audit import AuditEvent, AuditLogger
 from src.security.redaction import redact_text
 
@@ -154,13 +155,29 @@ def _example_skeleton(schema: type[BaseModel]) -> str:
     return json.dumps(example, indent=2)
 
 
+def _usage_of(message: Any) -> tuple[int, int]:
+    """Input/output tokens from a response, or zeros.
+
+    Token spend is the one operational cost this system cannot see from the
+    outside, and 'how expensive is an investigation' is a question an
+    operator will ask on day one. LangChain normalises usage across
+    providers as ``usage_metadata``; anything that does not report it simply
+    contributes zero rather than breaking the call.
+    """
+    usage = getattr(message, "usage_metadata", None) or {}
+    try:
+        return int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0))
+    except (AttributeError, TypeError, ValueError):
+        return 0, 0
+
+
 def _json_mode_completion(
     schema: type[T],
     *,
     system_prompt: str,
     user_prompt: str,
     temperature: float | None,
-) -> T:
+) -> tuple[T, tuple[int, int]]:
     """Fallback strategy: ask for raw JSON and parse it.
 
     Small local models frequently fail the tool-calling path that
@@ -184,7 +201,8 @@ def _json_mode_completion(
     if isinstance(content, list):  # some backends return content parts
         content = "".join(part if isinstance(part, str) else str(part.get("text", "")) for part in content)
 
-    return schema.model_validate(json.loads(_extract_json(str(content))))
+    parsed = schema.model_validate(json.loads(_extract_json(str(content))))
+    return parsed, _usage_of(response)
 
 
 class StructuredCall(BaseModel):
@@ -243,18 +261,25 @@ def structured_completion(
             audit_events=events,
         )
 
-    def _tool_calling_strategy() -> T:
-        model = get_chat_model(temperature=temperature).with_structured_output(schema)
-        result = model.invoke([("system", safe_system), ("human", safe_user)])
+    def _tool_calling_strategy() -> tuple[T, tuple[int, int]]:
+        # include_raw keeps the underlying message, which is the only place
+        # token usage survives; without it the parsed object arrives alone.
+        model = get_chat_model(temperature=temperature).with_structured_output(
+            schema, include_raw=True
+        )
+        envelope = model.invoke([("system", safe_system), ("human", safe_user)])
+
+        raw = envelope.get("raw") if isinstance(envelope, dict) else None
+        result = envelope.get("parsed") if isinstance(envelope, dict) else envelope
         if isinstance(result, dict):
             result = schema.model_validate(result)
         if not isinstance(result, schema):
             # `with_structured_output` yields None when the model fails to emit
             # a usable tool call -- the dominant failure mode for small models.
             raise TypeError(f"model returned {type(result).__name__}, expected {schema.__name__}")
-        return result
+        return result, _usage_of(raw)
 
-    def _json_strategy() -> T:
+    def _json_strategy() -> tuple[T, tuple[int, int]]:
         return _json_mode_completion(
             schema,
             system_prompt=safe_system,
@@ -269,7 +294,7 @@ def structured_completion(
     last_error: str | None = None
     for attempt, (strategy_name, strategy) in enumerate(strategies, start=1):
         try:
-            result = strategy()
+            result, (input_tokens, output_tokens) = strategy()
 
             duration_ms = (time.perf_counter() - started) * 1000
             events.append(
@@ -283,9 +308,15 @@ def structured_completion(
                         "attempt": attempt,
                         "strategy": strategy_name,
                         "prompt_chars": len(safe_system) + len(safe_user),
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
                     },
                     duration_ms=duration_ms,
                 )
+            )
+            metrics.llm_call(actor=actor.value, outcome="ok", duration_ms=duration_ms)
+            metrics.llm_tokens(
+                actor=actor.value, input_tokens=input_tokens, output_tokens=output_tokens
             )
             return StructuredCall(
                 parsed=result,
