@@ -30,6 +30,15 @@ demo-offline:  ## Same walkthrough with no LLM (deterministic, fast)
 test:  ## Run the test suite
 	$(PYTHON) -m pytest
 
+eval:  ## Score the pipeline against the labelled corpus (deterministic)
+	$(PYTHON) -m evals.runner
+
+eval-llm:  ## Same corpus, with the configured model
+	$(PYTHON) -m evals.runner --llm
+
+compare:  ## Supervisor vs. the single ReAct agent on the same corpus (needs Ollama)
+	$(PYTHON) -m evals.compare
+
 lint:  ## Lint with ruff
 	.venv/bin/ruff check src tests
 

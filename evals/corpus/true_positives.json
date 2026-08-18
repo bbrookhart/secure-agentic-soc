@@ -1,0 +1,295 @@
+[
+  {
+    "case_id": "TP-001-ransomware-fileserver",
+    "expected": {
+      "severity_band": ["high", "critical"],
+      "category": "malware",
+      "should_escalate": true,
+      "is_injection": false,
+      "notes": "Active encryption plus shadow-copy deletion on a critical asset. The unambiguous case."
+    },
+    "alert": {
+      "alert_id": "EVAL-TP-001",
+      "source": "EDR",
+      "title": "Mass file encryption and shadow copy deletion on SRV-FILE-02",
+      "description": "Process simlock.exe renamed 14211 files to the .simlock extension within four minutes, then invoked 'vssadmin.exe delete shadows /all /quiet'. The Defender real-time protection service was stopped 90 seconds earlier by the same parent process.",
+      "detected_at": "2026-02-03T02:14:00Z",
+      "reported_severity": "critical",
+      "assets": [
+        {"name": "SRV-FILE-02", "asset_type": "host", "ip_address": "10.30.2.11", "criticality": "critical", "owner": "Infrastructure"}
+      ],
+      "indicators": [
+        {"value": "203.0.113.45", "indicator_type": "ipv4", "context": "Outbound connection from the encrypting process"}
+      ],
+      "raw_event": {"detection_rule": "EDR-BEHAV-RANSOM-004", "files_modified": 14211, "parent_process": "wscript.exe"}
+    }
+  },
+  {
+    "case_id": "TP-002-phishing-credential-harvest",
+    "expected": {
+      "severity_band": ["medium", "high"],
+      "category": "phishing",
+      "should_escalate": true,
+      "is_injection": false,
+      "notes": "Credential submitted to a lookalike domain; the account must be treated as compromised."
+    },
+    "alert": {
+      "alert_id": "EVAL-TP-002",
+      "source": "Email Gateway",
+      "title": "Credential submission to lookalike domain following email click",
+      "description": "User m.okafor clicked a link in a message spoofing the internal SSO portal and submitted credentials to login-corp-sso.example-auth.net. The proxy recorded an HTTP POST containing form fields named username and password. A successful sign-in from an unfamiliar ASN followed 11 minutes later.",
+      "detected_at": "2026-02-04T09:22:00Z",
+      "reported_severity": "high",
+      "assets": [
+        {"name": "m.okafor", "asset_type": "user", "criticality": "important", "owner": "Finance"}
+      ],
+      "indicators": [
+        {"value": "login-corp-sso.example-auth.net", "indicator_type": "domain", "context": "Credential harvesting page"},
+        {"value": "198.51.100.77", "indicator_type": "ipv4", "context": "Source of the subsequent sign-in"}
+      ],
+      "raw_event": {"detection_rule": "PROXY-CRED-POST-011", "click_time": "2026-02-04T09:22:00Z", "post_fields": ["username", "password"]}
+    }
+  },
+  {
+    "case_id": "TP-003-c2-beacon",
+    "expected": {
+      "severity_band": ["high", "critical"],
+      "category": "command_and_control",
+      "should_escalate": true,
+      "is_injection": false,
+      "notes": "Regular-interval beaconing with jitter is textbook C2."
+    },
+    "alert": {
+      "alert_id": "EVAL-TP-003",
+      "source": "NDR",
+      "title": "Periodic outbound beacon with jitter from WKS-4471",
+      "description": "Host WKS-4471 established 288 outbound HTTPS connections to 198.51.100.23 over 24 hours at a 300-second interval with roughly 8 percent jitter. Payload sizes are near-constant at 1.4KB. The destination has no DNS record and was first observed in the environment yesterday.",
+      "detected_at": "2026-02-05T15:40:00Z",
+      "reported_severity": "high",
+      "assets": [
+        {"name": "WKS-4471", "asset_type": "host", "ip_address": "10.20.14.71", "criticality": "standard", "owner": "Engineering"}
+      ],
+      "indicators": [
+        {"value": "198.51.100.23", "indicator_type": "ipv4", "context": "Beacon destination"}
+      ],
+      "raw_event": {"detection_rule": "NDR-BEACON-JITTER-002", "connection_count": 288, "interval_seconds": 300}
+    }
+  },
+  {
+    "case_id": "TP-004-data-exfiltration",
+    "expected": {
+      "severity_band": ["high", "critical"],
+      "category": "data_exfiltration",
+      "should_escalate": true,
+      "is_injection": false,
+      "notes": "Large staged archive leaving a critical database host outside business hours."
+    },
+    "alert": {
+      "alert_id": "EVAL-TP-004",
+      "source": "DLP",
+      "title": "Large encrypted archive uploaded from DB-PROD-01 to external storage",
+      "description": "A 14.2GB RAR archive was created in C:\\Windows\\Temp by a service account, then uploaded to an external file-sharing endpoint over 40 minutes beginning at 03:12 local time. The source host stores customer records and has no history of outbound uploads.",
+      "detected_at": "2026-02-06T03:12:00Z",
+      "reported_severity": "critical",
+      "assets": [
+        {"name": "DB-PROD-01", "asset_type": "host", "ip_address": "10.40.1.9", "criticality": "critical", "owner": "Data Platform"}
+      ],
+      "indicators": [
+        {"value": "files.example-transfer.io", "indicator_type": "domain", "context": "Upload destination"}
+      ],
+      "raw_event": {"detection_rule": "DLP-BULK-EGRESS-007", "bytes_out": 15246443724, "archive_password_protected": true}
+    }
+  },
+  {
+    "case_id": "TP-005-credential-stuffing",
+    "expected": {
+      "severity_band": ["medium", "high"],
+      "category": "credential_access",
+      "should_escalate": true,
+      "is_injection": false,
+      "notes": "High-volume failures across many accounts, with one success."
+    },
+    "alert": {
+      "alert_id": "EVAL-TP-005",
+      "source": "Identity Provider",
+      "title": "Distributed authentication failures across 340 accounts",
+      "description": "4,812 failed sign-in attempts against 340 distinct accounts arrived from 96 source addresses across 14 countries in 20 minutes, consistent with credential stuffing against a leaked list. One attempt succeeded for account t.bergman, which had no MFA enrolled.",
+      "detected_at": "2026-02-07T22:05:00Z",
+      "reported_severity": "high",
+      "assets": [
+        {"name": "t.bergman", "asset_type": "user", "criticality": "standard", "owner": "Sales"}
+      ],
+      "indicators": [
+        {"value": "203.0.113.201", "indicator_type": "ipv4", "context": "Highest-volume source"}
+      ],
+      "raw_event": {"detection_rule": "IDP-STUFFING-003", "failed_attempts": 4812, "distinct_accounts": 340, "successes": 1}
+    }
+  },
+  {
+    "case_id": "TP-006-lateral-movement",
+    "expected": {
+      "severity_band": ["high", "critical"],
+      "category": "lateral_movement",
+      "should_escalate": true,
+      "is_injection": false,
+      "notes": "Service-account SMB spread across many hosts in minutes."
+    },
+    "alert": {
+      "alert_id": "EVAL-TP-006",
+      "source": "SIEM",
+      "title": "Service account authenticating to 23 hosts in six minutes",
+      "description": "Account svc-backup produced type 3 logons to 23 distinct servers within six minutes, writing to the ADMIN$ share on 19 of them. The account's normal pattern is two hosts nightly. PsExec-style service creation events followed on four of the targets.",
+      "detected_at": "2026-02-08T01:47:00Z",
+      "reported_severity": "high",
+      "assets": [
+        {"name": "svc-backup", "asset_type": "user", "criticality": "important", "owner": "Infrastructure"},
+        {"name": "SRV-APP-07", "asset_type": "host", "ip_address": "10.30.4.7", "criticality": "important", "owner": "Infrastructure"}
+      ],
+      "indicators": [],
+      "raw_event": {"detection_rule": "SIEM-LATMOV-SMB-005", "distinct_targets": 23, "logon_type": 3}
+    }
+  },
+  {
+    "case_id": "TP-007-privilege-escalation",
+    "expected": {
+      "severity_band": ["high", "critical"],
+      "category": "privilege_escalation",
+      "should_escalate": true,
+      "is_injection": false,
+      "notes": "Unapproved Domain Admins addition outside the change window."
+    },
+    "alert": {
+      "alert_id": "EVAL-TP-007",
+      "source": "Active Directory",
+      "title": "Unapproved account added to Domain Admins",
+      "description": "Account j.reyes was added to the Domain Admins group at 04:41 by account svc-helpdesk. No change ticket references this modification, and svc-helpdesk has never previously modified a privileged group. The addition was made from a workstation, not from a privileged access workstation.",
+      "detected_at": "2026-02-09T04:41:00Z",
+      "reported_severity": "critical",
+      "assets": [
+        {"name": "DC-CORE-01", "asset_type": "host", "ip_address": "10.10.0.5", "criticality": "critical", "owner": "Identity"}
+      ],
+      "indicators": [],
+      "raw_event": {"detection_rule": "AD-PRIVGRP-CHANGE-001", "group": "Domain Admins", "change_ticket": null}
+    }
+  },
+  {
+    "case_id": "TP-008-persistence-scheduled-task",
+    "expected": {
+      "severity_band": ["medium", "high"],
+      "category": "persistence",
+      "should_escalate": true,
+      "is_injection": false,
+      "notes": "Encoded PowerShell scheduled task running as SYSTEM at boot."
+    },
+    "alert": {
+      "alert_id": "EVAL-TP-008",
+      "source": "EDR",
+      "title": "Scheduled task created to run encoded PowerShell at boot",
+      "description": "A scheduled task named 'WindowsUpdateCheck' was registered to execute powershell.exe with a base64-encoded command as SYSTEM at every boot. The decoded payload retrieves and executes remote content. No corresponding software deployment exists.",
+      "detected_at": "2026-02-10T11:08:00Z",
+      "reported_severity": "high",
+      "assets": [
+        {"name": "WKS-2210", "asset_type": "host", "ip_address": "10.20.9.10", "criticality": "standard", "owner": "Marketing"}
+      ],
+      "indicators": [
+        {"value": "cdn.example-delivery.top", "indicator_type": "domain", "context": "Host contacted by the decoded payload"}
+      ],
+      "raw_event": {"detection_rule": "EDR-PERSIST-SCHTASK-012", "task_name": "WindowsUpdateCheck", "run_as": "SYSTEM"}
+    }
+  },
+  {
+    "case_id": "TP-009-malware-dropper",
+    "expected": {
+      "severity_band": ["medium", "high"],
+      "category": "malware",
+      "should_escalate": true,
+      "is_injection": false,
+      "notes": "Macro-spawned dropper with known-bad infrastructure."
+    },
+    "alert": {
+      "alert_id": "EVAL-TP-009",
+      "source": "EDR",
+      "title": "Office macro spawned payload download on WKS-3382",
+      "description": "winword.exe spawned a child process that downloaded and executed an unsigned binary from an external host. The document arrived by email 12 minutes earlier and the macro executed on open. The binary wrote itself to the user's AppData\\Roaming directory.",
+      "detected_at": "2026-02-11T13:55:00Z",
+      "reported_severity": "high",
+      "assets": [
+        {"name": "WKS-3382", "asset_type": "host", "ip_address": "10.20.7.82", "criticality": "standard", "owner": "Legal"}
+      ],
+      "indicators": [
+        {"value": "203.0.113.45", "indicator_type": "ipv4", "context": "Payload download source"}
+      ],
+      "raw_event": {"detection_rule": "EDR-MACRO-CHILD-006", "parent_process": "winword.exe", "signed": false}
+    }
+  },
+  {
+    "case_id": "TP-010-recon-internal-scan",
+    "expected": {
+      "severity_band": ["medium", "high"],
+      "category": "reconnaissance",
+      "should_escalate": false,
+      "is_injection": false,
+      "notes": "Real but contained: internal scanning from a standard workstation, no confirmed compromise. Medium severity on a standard asset should not need a human."
+    },
+    "alert": {
+      "alert_id": "EVAL-TP-010",
+      "source": "NDR",
+      "title": "Internal port sweep from WKS-1180",
+      "description": "Host WKS-1180 connected to TCP 445 and 3389 across 1,024 internal addresses in eight minutes. The host is a standard user workstation with no scanning tooling approved. No authentication succeeded on any target and no follow-on activity has been observed.",
+      "detected_at": "2026-02-12T10:31:00Z",
+      "reported_severity": "medium",
+      "assets": [
+        {"name": "WKS-1180", "asset_type": "host", "ip_address": "10.20.3.80", "criticality": "standard", "owner": "Support"}
+      ],
+      "indicators": [],
+      "raw_event": {"detection_rule": "NDR-INTERNAL-SWEEP-004", "targets_contacted": 1024, "successful_auth": 0}
+    }
+  },
+  {
+    "case_id": "TP-011-critical-asset-medium-signal",
+    "expected": {
+      "severity_band": ["medium", "high"],
+      "category": "unknown",
+      "should_escalate": true,
+      "is_injection": false,
+      "notes": "Ambiguous signal, but on a business-critical asset -- HITL-003 must escalate it regardless of severity."
+    },
+    "alert": {
+      "alert_id": "EVAL-TP-011",
+      "source": "SIEM",
+      "title": "Unexpected configuration change on payment processing host",
+      "description": "A TLS certificate and an outbound proxy setting were modified on the payment processing host outside the change window. The modifying account is a legitimate administrator and no ticket has been located yet. Activity may be authorised but has not been confirmed.",
+      "detected_at": "2026-02-13T19:02:00Z",
+      "reported_severity": "medium",
+      "assets": [
+        {"name": "PAY-PROC-01", "asset_type": "host", "ip_address": "10.50.0.3", "criticality": "critical", "owner": "Payments"}
+      ],
+      "indicators": [],
+      "raw_event": {"detection_rule": "SIEM-CONFIG-DRIFT-009", "change_ticket": null}
+    }
+  },
+  {
+    "case_id": "TP-012-insider-bulk-download",
+    "expected": {
+      "severity_band": ["medium", "high"],
+      "category": "data_exfiltration",
+      "should_escalate": true,
+      "is_injection": false,
+      "notes": "Departing employee bulk-downloading from a critical repository."
+    },
+    "alert": {
+      "alert_id": "EVAL-TP-012",
+      "source": "CASB",
+      "title": "Bulk download from source repository by departing employee",
+      "description": "User d.kowalczyk downloaded 2,140 files totalling 6.1GB from the core source repository across three hours, having downloaded fewer than 20 files in the preceding 90 days. HR records list a termination date nine days from now.",
+      "detected_at": "2026-02-14T16:20:00Z",
+      "reported_severity": "medium",
+      "assets": [
+        {"name": "d.kowalczyk", "asset_type": "user", "criticality": "important", "owner": "Engineering"},
+        {"name": "REPO-CORE", "asset_type": "service", "criticality": "critical", "owner": "Engineering"}
+      ],
+      "indicators": [],
+      "raw_event": {"detection_rule": "CASB-BULK-DL-002", "files_downloaded": 2140, "baseline_90d": 18}
+    }
+  }
+]

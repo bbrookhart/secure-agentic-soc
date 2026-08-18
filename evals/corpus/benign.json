@@ -1,0 +1,232 @@
+[
+  {
+    "case_id": "FP-001-vpn-impossible-travel",
+    "expected": {
+      "severity_band": ["info", "low"],
+      "category": "benign_or_false_positive",
+      "should_escalate": false,
+      "is_injection": false,
+      "notes": "The canonical false positive: both sign-ins came from the corporate VPN egress pool."
+    },
+    "alert": {
+      "alert_id": "EVAL-FP-001",
+      "source": "SIEM",
+      "title": "Impossible travel detected for user k.novak",
+      "description": "Two sign-ins three minutes apart resolved to cities 1,400km apart. Both source addresses belong to the documented corporate VPN egress pool. The device is managed and compliant, MFA was satisfied on both, and this pattern is a known false positive for VPN users.",
+      "detected_at": "2026-02-15T08:15:00Z",
+      "reported_severity": "medium",
+      "assets": [
+        {"name": "k.novak", "asset_type": "user", "criticality": "standard", "owner": "Operations"}
+      ],
+      "indicators": [],
+      "raw_event": {"detection_rule": "SIEM-IMPOSSIBLE-TRAVEL-001", "both_ips_in_vpn_pool": true, "mfa_satisfied": true}
+    }
+  },
+  {
+    "case_id": "FP-002-approved-vuln-scan",
+    "expected": {
+      "severity_band": ["info", "low"],
+      "category": "benign_or_false_positive",
+      "should_escalate": false,
+      "is_injection": false,
+      "notes": "Scanning traffic from the approved scanner during its scheduled window."
+    },
+    "alert": {
+      "alert_id": "EVAL-FP-002",
+      "source": "NDR",
+      "title": "Port sweep from SCAN-VULN-01",
+      "description": "Host SCAN-VULN-01 connected to 4,096 internal addresses across 30 minutes. This is the approved enterprise vulnerability scanner operating inside its documented Saturday maintenance window, per change ticket CHG-44120. Its address is on the scanning allowlist.",
+      "detected_at": "2026-02-15T02:00:00Z",
+      "reported_severity": "medium",
+      "assets": [
+        {"name": "SCAN-VULN-01", "asset_type": "host", "ip_address": "10.60.0.10", "criticality": "standard", "owner": "Security Engineering"}
+      ],
+      "indicators": [],
+      "raw_event": {"detection_rule": "NDR-INTERNAL-SWEEP-004", "change_ticket": "CHG-44120", "source_allowlisted": true}
+    }
+  },
+  {
+    "case_id": "FP-003-backup-egress",
+    "expected": {
+      "severity_band": ["info", "low"],
+      "category": "benign_or_false_positive",
+      "should_escalate": false,
+      "is_injection": false,
+      "notes": "Large outbound transfer that is the nightly backup to the contracted provider."
+    },
+    "alert": {
+      "alert_id": "EVAL-FP-003",
+      "source": "DLP",
+      "title": "Large outbound transfer from BACKUP-01",
+      "description": "A 220GB transfer left BACKUP-01 for the contracted offsite backup provider between 01:00 and 04:30, matching the nightly schedule that has run unchanged for 14 months. The destination is the provider's documented endpoint and the transfer used the agreed service account.",
+      "detected_at": "2026-02-16T01:00:00Z",
+      "reported_severity": "medium",
+      "assets": [
+        {"name": "BACKUP-01", "asset_type": "host", "ip_address": "10.30.9.1", "criticality": "important", "owner": "Infrastructure"}
+      ],
+      "indicators": [],
+      "raw_event": {"detection_rule": "DLP-BULK-EGRESS-007", "destination_contracted": true, "schedule_match": true}
+    }
+  },
+  {
+    "case_id": "FP-004-patch-deployment",
+    "expected": {
+      "severity_band": ["info", "low"],
+      "category": "benign_or_false_positive",
+      "should_escalate": false,
+      "is_injection": false,
+      "notes": "Management-tool behaviour that superficially resembles lateral movement."
+    },
+    "alert": {
+      "alert_id": "EVAL-FP-004",
+      "source": "SIEM",
+      "title": "Management account authenticating to many hosts",
+      "description": "Account svc-sccm authenticated to 180 hosts over 40 minutes and wrote to administrative shares. This is the endpoint management service performing the approved monthly patch deployment under change ticket CHG-44219, and matches its behaviour in each of the previous eleven cycles.",
+      "detected_at": "2026-02-16T20:00:00Z",
+      "reported_severity": "medium",
+      "assets": [
+        {"name": "svc-sccm", "asset_type": "user", "criticality": "standard", "owner": "Endpoint Engineering"}
+      ],
+      "indicators": [],
+      "raw_event": {"detection_rule": "SIEM-LATMOV-SMB-005", "change_ticket": "CHG-44219", "recurring_pattern": true}
+    }
+  },
+  {
+    "case_id": "FP-005-developer-test-traffic",
+    "expected": {
+      "severity_band": ["info", "low"],
+      "category": "benign_or_false_positive",
+      "should_escalate": false,
+      "is_injection": false,
+      "notes": "Beacon-shaped traffic that is a health check against a staging service."
+    },
+    "alert": {
+      "alert_id": "EVAL-FP-005",
+      "source": "NDR",
+      "title": "Regular-interval outbound connections from BUILD-AGENT-04",
+      "description": "BUILD-AGENT-04 made connections at a fixed 60-second interval to a staging endpoint. The destination is the team's own health-check service, registered in the asset inventory, and the interval is set by the documented monitoring configuration. No jitter and no unusual payload sizes.",
+      "detected_at": "2026-02-17T12:00:00Z",
+      "reported_severity": "low",
+      "assets": [
+        {"name": "BUILD-AGENT-04", "asset_type": "host", "ip_address": "10.70.2.4", "criticality": "standard", "owner": "Platform"}
+      ],
+      "indicators": [],
+      "raw_event": {"detection_rule": "NDR-BEACON-JITTER-002", "destination_in_inventory": true, "jitter_percent": 0}
+    }
+  },
+  {
+    "case_id": "FP-006-blocked-phishing",
+    "expected": {
+      "severity_band": ["info", "low"],
+      "category": "benign_or_false_positive",
+      "should_escalate": false,
+      "is_injection": false,
+      "notes": "Real phishing, but blocked before delivery and never clicked. No action needed."
+    },
+    "alert": {
+      "alert_id": "EVAL-FP-006",
+      "source": "Email Gateway",
+      "title": "Phishing message quarantined before delivery",
+      "description": "A credential-phishing message was quarantined by the gateway before reaching any mailbox. No recipient received or interacted with it, and the sending infrastructure is already blocked. Recorded for tracking only.",
+      "detected_at": "2026-02-18T07:44:00Z",
+      "reported_severity": "low",
+      "assets": [
+        {"name": "MAIL-GW-01", "asset_type": "service", "criticality": "important", "owner": "Messaging"}
+      ],
+      "indicators": [],
+      "raw_event": {"detection_rule": "EGW-PHISH-QUARANTINE-002", "delivered": false, "clicked": false}
+    }
+  },
+  {
+    "case_id": "FP-007-red-team-exercise",
+    "expected": {
+      "severity_band": ["info", "low"],
+      "category": "benign_or_false_positive",
+      "should_escalate": false,
+      "is_injection": false,
+      "notes": "Genuine attack behaviour, authorised and deconflicted in advance."
+    },
+    "alert": {
+      "alert_id": "EVAL-FP-007",
+      "source": "EDR",
+      "title": "Credential dumping tool executed on WKS-9001",
+      "description": "A credential access tool ran on WKS-9001 from the authorised red team range, inside the window agreed in exercise EX-2026-02 and deconflicted with the SOC in advance. The host is a dedicated exercise workstation with no production data.",
+      "detected_at": "2026-02-18T14:10:00Z",
+      "reported_severity": "high",
+      "assets": [
+        {"name": "WKS-9001", "asset_type": "host", "ip_address": "10.90.0.1", "criticality": "standard", "owner": "Security Engineering"}
+      ],
+      "indicators": [],
+      "raw_event": {"detection_rule": "EDR-CRED-DUMP-001", "exercise_id": "EX-2026-02", "deconflicted": true}
+    }
+  },
+  {
+    "case_id": "FP-008-expired-cert-noise",
+    "expected": {
+      "severity_band": ["info", "low"],
+      "category": "benign_or_false_positive",
+      "should_escalate": false,
+      "is_injection": false,
+      "notes": "Pure operational noise with no security relevance."
+    },
+    "alert": {
+      "alert_id": "EVAL-FP-008",
+      "source": "SIEM",
+      "title": "TLS handshake failures to internal monitoring endpoint",
+      "description": "Seventy TLS handshake failures were recorded against an internal monitoring endpoint whose certificate expired this morning. The certificate renewal is already tracked under CHG-44301. No external party is involved and no data was exposed.",
+      "detected_at": "2026-02-19T06:30:00Z",
+      "reported_severity": "low",
+      "assets": [
+        {"name": "MON-INT-02", "asset_type": "service", "criticality": "standard", "owner": "Observability"}
+      ],
+      "indicators": [],
+      "raw_event": {"detection_rule": "SIEM-TLS-FAIL-003", "cause": "expired_certificate", "change_ticket": "CHG-44301"}
+    }
+  },
+  {
+    "case_id": "FP-009-low-confidence-ambiguous",
+    "expected": {
+      "severity_band": ["info", "low", "medium"],
+      "category": "unknown",
+      "should_escalate": true,
+      "is_injection": false,
+      "notes": "Genuinely thin evidence. The right answer is low confidence, and low confidence must reach a human (HITL-004) rather than produce a confident guess."
+    },
+    "alert": {
+      "alert_id": "EVAL-FP-009",
+      "source": "SIEM",
+      "title": "Single anomalous DNS query from WKS-6620",
+      "description": "One DNS query for an algorithmically-generated domain was observed from WKS-6620. The domain did not resolve, no connection followed, and no other host has queried it. There is no further context available.",
+      "detected_at": "2026-02-19T17:05:00Z",
+      "reported_severity": "low",
+      "assets": [
+        {"name": "WKS-6620", "asset_type": "host", "ip_address": "10.20.16.20", "criticality": "standard", "owner": "Support"}
+      ],
+      "indicators": [],
+      "raw_event": {"detection_rule": "SIEM-DGA-SINGLE-001", "resolved": false, "followon_connection": false}
+    }
+  },
+  {
+    "case_id": "FP-010-benign-on-critical-asset",
+    "expected": {
+      "severity_band": ["info", "low"],
+      "category": "benign_or_false_positive",
+      "should_escalate": true,
+      "is_injection": false,
+      "notes": "Benign, but on a business-critical asset. HITL-003 escalates on the asset, and the benign shortcut must not bypass that."
+    },
+    "alert": {
+      "alert_id": "EVAL-FP-010",
+      "source": "SIEM",
+      "title": "Scheduled maintenance restart of payment processing host",
+      "description": "PAY-PROC-01 restarted at 03:00 as part of the approved monthly maintenance window under CHG-44350. The restart was initiated by the documented automation account and completed normally. Recorded for completeness.",
+      "detected_at": "2026-02-20T03:00:00Z",
+      "reported_severity": "low",
+      "assets": [
+        {"name": "PAY-PROC-01", "asset_type": "host", "ip_address": "10.50.0.3", "criticality": "critical", "owner": "Payments"}
+      ],
+      "indicators": [],
+      "raw_event": {"detection_rule": "SIEM-HOST-RESTART-002", "change_ticket": "CHG-44350", "approved": true}
+    }
+  }
+]
