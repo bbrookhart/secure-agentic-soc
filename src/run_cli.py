@@ -28,6 +28,8 @@ from src.model_provenance import ModelIntegrityError, verify_model
 from src.observability import metrics
 from src.security.audit import get_audit_logger, verify_chain
 from src.security.identity import capability_matrix
+from src.security.instance_lock import InstanceLockError, default_lock
+from src.security.operating_mode import current_mode
 from src.security.policy import default_policy
 from src.security.redaction import register_secrets
 from src.state import SOCState
@@ -82,6 +84,35 @@ def cmd_policy() -> int:
     for row in capability_matrix():
         tools = ", ".join(row["tools"])  # type: ignore[arg-type]
         print(f"  {row['agent']:<26} {tools[:60]:<62} {row['max_action_risk']:<12}")
+    return 0
+
+
+def cmd_mode(value: str | None, reason: str) -> int:
+    """Show or set the operating mode -- the kill switch.
+
+    Deliberately a first-class command rather than a config edit: during an
+    incident, 'stop completing anything autonomously' has to be one command
+    away, and it takes effect on the next routing decision rather than the
+    next restart.
+    """
+    from src.security.operating_mode import OperatingMode, current_mode, set_mode
+
+    if value is None:
+        mode = current_mode()
+        _header("Operating mode")
+        print(f"  Current : {_c(mode.value, YELLOW if mode.forces_human_review else GREEN)}")
+        print(f"  Meaning : {mode.description}")
+        print("\n  Modes   : " + ", ".join(m.value for m in OperatingMode))
+        return 0
+
+    try:
+        mode = OperatingMode(value)
+    except ValueError:
+        print(_c(f"error: unknown mode '{value}'", RED), file=sys.stderr)
+        return 2
+
+    set_mode(mode, reason=reason, audit=get_audit_logger())
+    print(f"  Operating mode set to {_c(mode.value, YELLOW)}: {mode.description}")
     return 0
 
 
@@ -251,6 +282,19 @@ def cmd_run(args: argparse.Namespace) -> int:
         get_settings.cache_clear()
         settings = get_settings()
 
+    mode = current_mode()
+    if not mode.accepts_new_runs:
+        print(
+            _c(
+                f"refusing to start: operating mode is '{mode.value}' -- {mode.description}.",
+                YELLOW,
+            ),
+            file=sys.stderr,
+        )
+        return 3
+    if mode.forces_human_review:
+        print(_c(f"  NOTE     : operating mode '{mode.value}'; every run requires review.", YELLOW))
+
     try:
         alert = resolve_alert(args.alert)
     except AlertIngestError as exc:
@@ -275,6 +319,32 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"  Digest   : {provenance.short_digest}"
               + (" [pinned]" if provenance.pinned else ""))
 
+    # One writer per state directory. Two instances would silently multiply
+    # the tool rate limit and can corrupt the audit chain for a resumed run,
+    # so the single-node assumption fails loudly instead of coincidentally.
+    lock = None
+    if not args.ephemeral:
+        lock = default_lock()
+        try:
+            lock.acquire()
+        except InstanceLockError as exc:
+            print(_c(f"error: {exc}", RED), file=sys.stderr)
+            return 4
+
+    try:
+        return _investigate(args, settings, alert, provenance)
+    finally:
+        if lock is not None:
+            lock.release()
+
+
+def _investigate(
+    args: argparse.Namespace,
+    settings: Any,
+    alert: Any,
+    provenance: Any,
+) -> int:
+    """The investigation itself, run while holding the instance lock."""
     checkpointer = build_memory() if args.ephemeral else build_checkpointer()
     graph = build_graph(checkpointer=checkpointer, consult_llm=not settings.offline_mode)
 
@@ -401,6 +471,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--list", "-l", action="store_true", help="List bundled sample alerts.")
     parser.add_argument("--policy", action="store_true", help="Show approval policy and capability matrix.")
     parser.add_argument("--health", action="store_true", help="Run readiness checks and exit.")
+    parser.add_argument(
+        "--mode",
+        nargs="?",
+        const="",
+        metavar="MODE",
+        help="Show the operating mode, or set it: normal | review_all | drain | halt.",
+    )
+    parser.add_argument("--reason", default="", help="Why the operating mode changed.")
     parser.add_argument("--verify-audit", metavar="THREAD_ID", help="Verify the audit hash chain for a run.")
     parser.add_argument("--thread-id", help="Explicit thread id (resumes an existing run if it exists).")
     parser.add_argument("--offline", action="store_true", help="Force deterministic mode with no LLM calls.")
@@ -429,6 +507,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_list()
     if args.policy:
         return cmd_policy()
+    if args.mode is not None:
+        return cmd_mode(args.mode or None, args.reason)
     if args.health:
         return cmd_health()
     if args.verify_audit:

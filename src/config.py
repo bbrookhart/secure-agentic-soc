@@ -191,6 +191,16 @@ class Settings(BaseSettings):
         ),
     )
 
+    # --- Operating mode --------------------------------------------------
+    # The default when no runtime override file is present. The file in
+    # state/operating_mode takes precedence, because during an incident a
+    # control that needs a redeploy is a control that does not exist.
+    operating_mode: str = Field(
+        default="normal",
+        pattern="^(normal|review_all|drain|halt)$",
+        description="normal | review_all | drain | halt. See src/security/operating_mode.py.",
+    )
+
     # --- Observability ---------------------------------------------------
     # Off by default. Telemetry is an egress path and the data here is
     # incident data, so switching it on is a decision -- see

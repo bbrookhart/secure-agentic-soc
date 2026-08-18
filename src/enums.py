@@ -165,5 +165,8 @@ class AuditAction(str, Enum):
     # Which weights and which prompts produced this run. A tag is mutable;
     # the digest is what makes a verdict attributable months later.
     MODEL_VERIFIED = "model_verified"
+    # Autonomy was narrowed or widened. Both directions matter; widening
+    # back to normal is the one a reviewer will ask about.
+    OPERATING_MODE_CHANGED = "operating_mode_changed"
     STATE_TRANSITION = "state_transition"
     ERROR = "error"

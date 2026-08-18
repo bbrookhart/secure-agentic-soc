@@ -41,6 +41,8 @@ class PolicyInput(BaseModel):
     #: suppressing rule would be trainable by anyone able to generate
     #: benign-looking alerts.
     related_confirmed_malicious: int = Field(default=0, ge=0)
+    #: True when the operator has narrowed autonomy system-wide.
+    autonomy_suspended: bool = False
 
 
 class PolicyDecision(BaseModel):
@@ -109,6 +111,18 @@ class ApprovalPolicy:
                 predicate=lambda i: i.tool_calls_used >= i.max_tool_calls,
             ),
             # --- REQUIRE_APPROVAL: human gates ------------------------------------
+            # First, because it is the most specific reason to stop: an
+            # operator has deliberately taken autonomy away, and an analyst
+            # should be told that rather than a severity threshold.
+            PolicyRule(
+                rule_id="HITL-000-autonomy-suspended",
+                effect=PolicyEffect.REQUIRE_APPROVAL,
+                reason=(
+                    "Autonomous completion is suspended system-wide; every run requires "
+                    "human review until the operating mode returns to normal."
+                ),
+                predicate=lambda i: i.autonomy_suspended,
+            ),
             PolicyRule(
                 rule_id="HITL-001-high-severity",
                 effect=PolicyEffect.REQUIRE_APPROVAL,

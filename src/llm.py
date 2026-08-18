@@ -41,6 +41,49 @@ class LLMUnavailable(RuntimeError):
     """Raised when the local model server cannot be reached."""
 
 
+#: Consecutive failures before the breaker opens, and how long it stays open.
+#:
+#: Without this, a model server that accepts connections but fails every
+#: request costs the full timeout on *every* node of *every* run -- the
+#: pathology that made an early eval run take two minutes per case. Opening
+#: the breaker converts that into an immediate, audited fallback.
+_BREAKER_THRESHOLD = 3
+_BREAKER_COOLDOWN_SECONDS = 60.0
+_breaker_failures = 0
+_breaker_opened_at: float | None = None
+
+
+def _breaker_is_open() -> bool:
+    """True while the breaker is holding calls back."""
+    global _breaker_opened_at, _breaker_failures
+    if _breaker_opened_at is None:
+        return False
+    if time.monotonic() - _breaker_opened_at >= _BREAKER_COOLDOWN_SECONDS:
+        # Half-open: let the next call through and judge by its result.
+        _breaker_opened_at = None
+        _breaker_failures = 0
+        return False
+    return True
+
+
+def _breaker_record(*, ok: bool) -> None:
+    global _breaker_failures, _breaker_opened_at
+    if ok:
+        _breaker_failures = 0
+        _breaker_opened_at = None
+        return
+    _breaker_failures += 1
+    if _breaker_failures >= _BREAKER_THRESHOLD:
+        _breaker_opened_at = time.monotonic()
+
+
+def reset_breaker() -> None:
+    """Test hook."""
+    global _breaker_failures, _breaker_opened_at
+    _breaker_failures = 0
+    _breaker_opened_at = None
+
+
 def is_available(*, force: bool = False) -> bool:
     """Probe the Ollama server, caching the answer briefly.
 
@@ -53,6 +96,10 @@ def is_available(*, force: bool = False) -> bool:
 
     settings = get_settings()
     if settings.offline_mode:
+        return False
+    # A tripped breaker means the deterministic path, immediately, rather
+    # than another timeout on every node.
+    if _breaker_is_open():
         return False
 
     now = time.monotonic()
@@ -314,6 +361,7 @@ def structured_completion(
                     duration_ms=duration_ms,
                 )
             )
+            _breaker_record(ok=True)
             metrics.llm_call(actor=actor.value, outcome="ok", duration_ms=duration_ms)
             metrics.llm_tokens(
                 actor=actor.value, input_tokens=input_tokens, output_tokens=output_tokens
@@ -328,6 +376,8 @@ def structured_completion(
 
         except Exception as exc:  # noqa: BLE001 - malformed output is routine here
             last_error = f"{type(exc).__name__}: {exc}"
+            _breaker_record(ok=False)
+            metrics.llm_call(actor=actor.value, outcome="error")
             events.append(
                 audit.record(
                     thread_id=thread_id,

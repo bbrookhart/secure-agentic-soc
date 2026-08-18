@@ -40,6 +40,7 @@ from src.observability import metrics
 from src.prompts import SUPERVISOR as _SUPERVISOR
 from src.prompts import with_preamble
 from src.security.audit import AuditEvent
+from src.security.operating_mode import current_mode
 from src.security.policy import ApprovalPolicy, PolicyDecision, PolicyInput
 from src.state import Phase, SOCState
 
@@ -105,6 +106,7 @@ def build_policy_input(state: SOCState, *, max_tool_calls: int) -> PolicyInput:
         max_tool_calls=max_tool_calls,
         untrusted_content_flagged=flagged,
         related_confirmed_malicious=state.related_confirmed_malicious,
+        autonomy_suspended=current_mode().forces_human_review,
     )
 
 
@@ -122,6 +124,16 @@ def deterministic_route(state: SOCState, policy_decision: PolicyDecision) -> Rou
             route=Route.HALT,
             rule_id="R-002",
             reason=f"Supervisor turn limit ({MAX_SUPERVISOR_TURNS}) reached; halting to bound the run.",
+        )
+
+    # --- Operator halt ----------------------------------------------------
+    # Checked before policy: 'stop everything' is not a policy question, and
+    # an incident responder who set halt expects it to mean halt.
+    if current_mode().stops_in_flight:
+        return RouteDecision(
+            route=Route.HALT,
+            rule_id="R-004",
+            reason="Operating mode is 'halt'; stopping this run at the supervisor turn.",
         )
 
     # --- Hard policy denial ----------------------------------------------

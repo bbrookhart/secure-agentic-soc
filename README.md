@@ -15,7 +15,7 @@ or reach a capability it was never granted.
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Supervisor-1C3C3C?style=flat-square)](https://langchain-ai.github.io/langgraph/)
 [![Ollama](https://img.shields.io/badge/Ollama-Local_Inference-000000?style=flat-square&logo=ollama&logoColor=white)](https://ollama.com)
-[![Tests](https://img.shields.io/badge/tests-273_passing-3FB950?style=flat-square)](tests/)
+[![Tests](https://img.shields.io/badge/tests-294_passing-3FB950?style=flat-square)](tests/)
 [![Type checked](https://img.shields.io/badge/mypy-strict-2A6DB0?style=flat-square)](pyproject.toml)
 
 [![Local first](https://img.shields.io/badge/🔒_Local_first-no_data_egress-0969DA?style=flat-square)](#security-controls)
@@ -538,8 +538,8 @@ src/
 evals/            35 labelled alerts + scoring runner + baseline comparison
 scripts/          supply-chain tooling (dependency audit wrapper)
 data/             sample alerts · MITRE subset · threat intel · log corpus
-docs/             ARCHITECTURE.md · THREAT_MODEL.md
-tests/            273 tests, all offline
+docs/             ARCHITECTURE.md · THREAT_MODEL.md · RUNBOOKS.md
+tests/            294 tests, all offline
 ```
 
 > [!TIP]

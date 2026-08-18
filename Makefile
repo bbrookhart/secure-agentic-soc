@@ -62,6 +62,12 @@ sbom:  ## Generate a CycloneDX SBOM for the current environment
 	$(PYTHON) -m cyclonedx_py environment --output-format JSON --outfile sbom.json
 	@echo "wrote sbom.json"
 
+mode:  ## Show the operating mode (make mode SET=review_all REASON="...")
+	$(PYTHON) -m src.run_cli --mode $(SET) $(if $(REASON),--reason "$(REASON)",)
+
+backup:  ## Archive the state volume (audit, checkpoints, cases)
+	scripts/backup.sh create
+
 health:  ## Readiness checks (can this system triage an alert safely?)
 	$(PYTHON) -m src.run_cli --health
 
