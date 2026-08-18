@@ -1,41 +1,17 @@
 # Suppressed dependency findings.
 #
-# Every ID here is justified in docs/DEPENDENCY_EXCEPTIONS.md with a
+# Currently: none. The audit is clean without suppressions, which is the state
+# worth defending -- every entry here is a small piece of coverage given up.
+#
+# Any ID added must be justified in docs/DEPENDENCY_EXCEPTIONS.md with a
 # REACHABILITY argument -- "there is no call site", checkable with a grep --
-# not a severity opinion. Each carries a review date.
+# not a severity opinion. Each carries a review date no more than 90 days out.
+# scripts/audit_deps.py refuses to run if an ID here has no written
+# justification, so the list and the reasoning cannot drift apart.
 #
-# Reachable vulnerabilities are NOT listed here. They are fixed, or accepted as
-# risk by an owner with compensating controls, in the same document. A scanner
-# whose suppressions are unargued is decoration.
+# Reachable vulnerabilities are never listed here. They are fixed, or accepted
+# as risk by a named owner with compensating controls, in the same document.
+# A scanner whose suppressions are unargued is decoration.
 #
-# Consumed by:  make audit-deps  /  CI supply-chain job
+# Consumed by:  make audit-deps  /  the CI supply-chain job
 # Format: one vulnerability ID per line; # comments and blank lines ignored.
-
-# --- langchain-core: no call site ------------------------------------------
-# Prompt-loading path traversal; this project has no load_prompt() call.
-PYSEC-2026-2193
-# SSRF via ChatOpenAI image token counting; inference is local Ollama only.
-PYSEC-2026-2562
-
-# --- langgraph-checkpoint: caching layer not enabled ------------------------
-# pickle fallback in BaseCache; no node caching is configured.
-PYSEC-2026-2574
-
-# --- langgraph-sdk: transitive, unused --------------------------------------
-# URL path injection in the SDK; the graph runs in-process, no SDK call site.
-PYSEC-2026-2194
-PYSEC-2026-2575
-
-# --- langgraph-checkpoint-sqlite: store and search unused -------------------
-# BaseStore namespace prefix confusion; no store is used.
-PYSEC-2026-3636
-# SQL injection via checkpoint-search metadata filter keys; search is never
-# called, and thread ids are internally generated, never taken from alerts.
-CVE-2025-67644
-
-# NOT suppressed, deliberately:
-#   PYSEC-2026-1527, PYSEC-2026-2573, PYSEC-2026-83
-#   JsonPlusSerializer checkpoint deserialization RCE. Reachable: this system
-#   persists checkpoints with SqliteSaver and reloads them in another process
-#   every time an analyst answers the approval gate. See
-#   docs/DEPENDENCY_EXCEPTIONS.md - Accepted risk.

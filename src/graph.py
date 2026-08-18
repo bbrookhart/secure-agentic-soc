@@ -440,12 +440,62 @@ def _parse_approval_response(response: Any, request_id: str) -> ApprovalDecision
     )
 
 
+#: Modules whose types are legitimately reconstructed when a checkpoint is loaded.
+#: Only this project's own state vocabulary -- nothing else.
+_CHECKPOINT_TYPE_MODULES = ("src.state", "src.enums", "src.security.audit")
+
+
+def checkpoint_allowlist() -> list[tuple[str, str]]:
+    """The types a checkpoint is permitted to reconstruct.
+
+    Loading a checkpoint means deserialising it, and deserialisation that can
+    reconstruct arbitrary objects is a code-execution primitive: this is
+    PYSEC-2026-83 / 1527 / 2573, which were reachable here precisely because a
+    resumed approval *is* a checkpoint load in a fresh process.
+
+    Upgrading closed the JSON path. This closes the msgpack one, which otherwise
+    defaults to warn-and-allow: with an explicit allowlist, the serialiser will
+    reconstruct the built-in safe set plus exactly these types, and a payload
+    naming anything else -- ``os.system``, say -- comes back as inert data.
+
+    The list is derived from this project's own modules rather than hand-written,
+    so adding a state model cannot silently leave it unloadable, and it still
+    cannot widen beyond the three modules above. Passing it explicitly rather
+    than relying on ``LANGGRAPH_STRICT_MSGPACK`` means the control does not
+    depend on an environment variable someone forgot to set.
+    """
+    import importlib
+    import inspect
+
+    allowed: set[tuple[str, str]] = set()
+    for module_name in _CHECKPOINT_TYPE_MODULES:
+        module = importlib.import_module(module_name)
+        for name, obj in vars(module).items():
+            if name.startswith("_") or not inspect.isclass(obj):
+                continue
+            # Defined here, not merely imported into this namespace.
+            if getattr(obj, "__module__", None) == module_name:
+                allowed.add((module_name, name))
+    return sorted(allowed)
+
+
+def _serializer() -> Any:
+    """Checkpoint serialiser restricted to this project's own types."""
+    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+
+    return JsonPlusSerializer(allowed_msgpack_modules=checkpoint_allowlist())
+
+
 def build_checkpointer(db_path: Path | None = None) -> Any:
     """Create a SQLite checkpointer.
 
     Checkpointing is what makes the HITL gate real: the graph can be suspended
     at an interrupt, the process can exit, and an analyst can resume the run
     minutes or hours later from persisted state.
+
+    That durability is also why the checkpoint store is integrity-sensitive
+    storage, at the same level as the audit log: whoever can write it decides
+    what gets deserialised. Hence the restricted serialiser.
     """
     from langgraph.checkpoint.sqlite import SqliteSaver
 
@@ -457,11 +507,15 @@ def build_checkpointer(db_path: Path | None = None) -> Any:
     path.parent.mkdir(parents=True, exist_ok=True)
 
     connection = sqlite3.connect(str(path), check_same_thread=False)
-    return SqliteSaver(connection)
+    return SqliteSaver(connection, serde=_serializer())
 
 
 def build_memory_checkpointer() -> Any:
-    """In-memory checkpointer for tests and ephemeral runs."""
+    """In-memory checkpointer for tests and ephemeral runs.
+
+    Uses the same restricted serialiser as the durable one, so tests exercise
+    the configuration that actually ships.
+    """
     from langgraph.checkpoint.memory import MemorySaver
 
-    return MemorySaver()
+    return MemorySaver(serde=_serializer())

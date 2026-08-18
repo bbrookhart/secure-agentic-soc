@@ -15,7 +15,7 @@ or reach a capability it was never granted.
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Supervisor-1C3C3C?style=flat-square)](https://langchain-ai.github.io/langgraph/)
 [![Ollama](https://img.shields.io/badge/Ollama-Local_Inference-000000?style=flat-square&logo=ollama&logoColor=white)](https://ollama.com)
-[![Tests](https://img.shields.io/badge/tests-109_passing-3FB950?style=flat-square)](tests/)
+[![Tests](https://img.shields.io/badge/tests-190_passing-3FB950?style=flat-square)](tests/)
 [![Type checked](https://img.shields.io/badge/mypy-strict-2A6DB0?style=flat-square)](pyproject.toml)
 
 [![Local first](https://img.shields.io/badge/🔒_Local_first-no_data_egress-0969DA?style=flat-square)](#security-controls)
@@ -169,7 +169,7 @@ unrepresentable in the state machine.
 |:--|:--|:--|:--|
 | 🧭 **Supervisor** | Route work, enforce HITL policy | — *none* | `read-only` |
 | 🔍 **Triage** | Severity, category, confidence, candidate ATT&CK | `classify_alert` | `read-only` |
-| 🎯 **Enrichment / Hunter** | IOC reputation, ATT&CK mapping, log correlation, containment drafting | `enrich_ioc` `lookup_mitre` `query_vector_logs` `draft_containment_proposal` | `disruptive` *(draft only)* |
+| 🎯 **Enrichment / Hunter** | IOC reputation, ATT&CK mapping, log correlation, case history, containment drafting | `enrich_ioc` `lookup_mitre` `query_vector_logs` `query_case_history` `draft_containment_proposal` | `disruptive` *(draft only)* |
 | 📄 **Reporter** | Synthesise the incident report | — *none* | `read-only` |
 
 > [!NOTE]
@@ -516,7 +516,7 @@ src/
 evals/            35 labelled alerts + scoring runner + baseline comparison
 data/             sample alerts · MITRE subset · threat intel · log corpus
 docs/             ARCHITECTURE.md · THREAT_MODEL.md
-tests/            170 tests, all offline
+tests/            190 tests, all offline
 ```
 
 > [!TIP]
@@ -579,6 +579,7 @@ under-called, category accuracy **49%**, **0** missed escalations.
 | **Correlation is entity-exact** | Alerts are linked by exact asset name, IP or indicator match. An attacker who moves to a differently-named host breaks the link, and there is no fuzzy or behavioural correlation. |
 | **Default retrieval is lexical, not semantic** | TF-IDF matches *"powershell encoded command"* but not *"obfuscated script execution"*. Set `SOC_EMBEDDING_BACKEND=ollama` for genuine semantic recall. |
 | **Small models produce mediocre analysis** | `llama3.2` (3B) writes confident prose around thin reasoning. The deterministic controls hold regardless, but quality scales with model size. |
+| **Checkpoint store is integrity-sensitive** | Whoever can write `state/checkpoints.sqlite` controls what gets deserialised on the next resume. Upgrading past `PYSEC-2026-1527` and the msgpack allowlist in `graph.py` close the known execution paths, but the volume still needs the same protection as the audit log. |
 | **Synthetic intel and log corpus** | Deliberately limited coverage. Unknown indicators are reported as *UNKNOWN, not benign*. |
 | **This is a triage assistant, not an authority** | Treat output as a junior analyst's first pass. Automation bias is real — the reason confidence is surfaced everywhere and low confidence forces human review. |
 
@@ -598,7 +599,7 @@ Full analysis in **[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)**.
 | `LLM01` | **Prompt Injection** | Primary threat — four-layer defence, demonstrated by `alert-005` |
 | `LLM02` | Insecure Output Handling | Pydantic validation throughout; structural report facts copied from state |
 | `LLM04` | Model Denial of Service | Rate limits, tool budgets, turn caps, container resource limits |
-| `LLM05` | Supply Chain | Pinned dependency ranges, multi-stage build, no runtime installs |
+| `LLM05` | Supply Chain | Hash-pinned lockfile installed with `--require-hashes`; CVE, secret, SAST and image scanning in CI; SBOM and Sigstore-signed builds with SLSA provenance |
 | `LLM06` | Sensitive Information Disclosure | Redaction chokepoints, local-only inference |
 | `LLM07` | Insecure Plugin Design | Narrow schema-validated tools, no general-purpose capability |
 | `LLM08` | Excessive Agency | Least privilege, proposal-only actions, HITL gates |

@@ -158,14 +158,33 @@ $ python -m src.run_cli --verify-audit run-63ea7da46446
 ```
 
 > [!CAUTION]
-> **Residual risk — accepted, significant.** The chain is **tamper-evident, not tamper-proof**.
-> An attacker with write access to `audit.jsonl` *and* the ability to run this code can
-> recompute the whole chain from any point forward. Detecting that requires an anchor outside
-> the attacker's control.
+> **Residual risk — significant.** The chain is **tamper-evident, not tamper-proof**. An
+> attacker with write access to `audit.jsonl` *and* the ability to run this code can recompute
+> the whole chain from any point forward. Detecting that requires an anchor outside the
+> attacker's control.
 >
-> **A production deployment must ship audit events to append-only external storage** (SIEM,
-> WORM bucket, or a signed remote log). This is the single largest gap between this project and
-> a production system, and **it is not fixable inside the process.**
+> Set `SOC_AUDIT_FORWARD_URL` or `SOC_AUDIT_SYSLOG_ADDRESS` so every event also lands in
+> append-only storage under different credentials (SIEM, WORM bucket, signed remote log). A
+> later local rewrite then diverges from a copy it cannot retract, and divergence is the
+> detection. Unforwarded, this remains the largest gap, and **it is not fixable inside the
+> process.**
+
+> [!IMPORTANT]
+> **The conjunction above is doing real work, and it is fragile.** The argument reads *"write
+> access **and** the ability to run this code"* — two capabilities. Anything that lets the first
+> imply the second invalidates it.
+>
+> That is exactly what a dependency advisory did. Until 2026-08-18 the pinned
+> `langgraph-checkpoint` reconstructed arbitrary Python objects when loading a checkpoint
+> (`PYSEC-2026-1527` / `2573` / `83`), and this system reloads a checkpoint in a fresh process
+> on *every* approval — so on the state volume, **file write became code execution**. Fixed by
+> upgrading, plus an explicit msgpack allowlist in
+> [`graph.py`](../src/graph.py); see [DEPENDENCY_EXCEPTIONS.md](DEPENDENCY_EXCEPTIONS.md).
+>
+> The lasting conclusion is not about one CVE: **`state/checkpoints.sqlite` is
+> integrity-sensitive storage at the same level as the audit log**, and must be protected as
+> such. Any future argument here that treats file write and code execution as separate
+> capabilities has to be re-checked against whatever deserialises persisted state.
 
 ---
 
