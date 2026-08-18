@@ -23,6 +23,7 @@ only way to write an unguarded tool is to bypass the broker deliberately.
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -101,6 +102,8 @@ class ToolBroker:
     max_calls_per_run: int = 40
     #: Per-thread tally of tool calls, enforcing the run budget.
     _calls_used: dict[str, int] = field(default_factory=dict)
+    #: Guards ``_calls_used``; several runs may be in flight at once.
+    _budget_lock: threading.Lock = field(default_factory=threading.Lock)
 
     def __post_init__(self) -> None:
         if self.rate_limiter is None:
@@ -115,10 +118,27 @@ class ToolBroker:
         return [tool for name, tool in self.registry.items() if identity.can_use(name)]
 
     def calls_used(self, thread_id: str) -> int:
-        return self._calls_used.get(thread_id, 0)
+        with self._budget_lock:
+            return self._calls_used.get(thread_id, 0)
+
+    def seed_budget(self, thread_id: str, used: int) -> None:
+        """Restore a run's spend from checkpointed state.
+
+        The tally lives in this process, but a run does not -- it can suspend at
+        the approval interrupt and resume in a different process entirely.
+        Without seeding, the resumed half would start from zero and the run
+        could spend its budget over again, which is also how the persisted
+        ``tool_calls_used`` was previously overwritten with 0 on resume.
+        Only ever moves the tally forward.
+        """
+        if used <= 0:
+            return
+        with self._budget_lock:
+            self._calls_used[thread_id] = max(self._calls_used.get(thread_id, 0), used)
 
     def reset_budget(self, thread_id: str) -> None:
-        self._calls_used.pop(thread_id, None)
+        with self._budget_lock:
+            self._calls_used.pop(thread_id, None)
 
     # --- Invocation ------------------------------------------------------
     def invoke(
@@ -186,7 +206,7 @@ class ToolBroker:
             )
 
         # --- 3. Budgets and rate limits ----------------------------------
-        used = self._calls_used.get(thread_id, 0)
+        used = self.calls_used(thread_id)
         if used >= self.max_calls_per_run:
             return _fail(
                 AuditAction.RATE_LIMITED,
@@ -220,10 +240,26 @@ class ToolBroker:
                 ],
             )
 
-        # --- 5. Log the invocation BEFORE running it ---------------------
+        # --- 5. Claim budget, then log the invocation BEFORE running it --
+        # The claim is re-checked under the lock: the earlier check was a fast
+        # rejection, but with several runs in flight only an atomic
+        # check-and-increment actually bounds the spend.  Charging happens here
+        # rather than at the first check so a schema-rejected call costs
+        # nothing.
+        with self._budget_lock:
+            used = self._calls_used.get(thread_id, 0)
+            over_budget = used >= self.max_calls_per_run
+            if not over_budget:
+                self._calls_used[thread_id] = used + 1
+        if over_budget:
+            return _fail(
+                AuditAction.RATE_LIMITED,
+                f"run tool budget exhausted ({used}/{self.max_calls_per_run})",
+                reason="run_budget_exhausted",
+            )
+
         # Ordering matters: a handler that hangs or crashes the process still
         # leaves evidence that it was called.
-        self._calls_used[thread_id] = used + 1
         events.append(
             self.audit.record(
                 thread_id=thread_id,

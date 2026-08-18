@@ -87,9 +87,12 @@ class AuditEvent(BaseModel):
 
 
 class AuditLogger:
-    """Append-only JSONL audit sink with an in-process hash chain.
+    """Append-only JSONL audit sink with a hash chain.
 
     Thread-safe: the Streamlit UI and the graph can both hold a reference.
+    Chain position is held in memory but recovered from the persisted log on
+    first write for a run (see :meth:`_rehydrate`), so a run that spans several
+    processes still produces one unbroken chain.
     """
 
     def __init__(self, path: Path | None = None, *, echo: bool = False) -> None:
@@ -99,10 +102,42 @@ class AuditLogger:
         # Per-thread_id chain state, so concurrent runs do not interleave hashes.
         self._sequence: dict[str, int] = {}
         self._last_hash: dict[str, str] = {}
+        #: thread_ids whose chain state has been recovered from disk.
+        self._rehydrated: set[str] = set()
         #: Problems encountered while reading the log back (corrupt/edited lines).
         self.read_errors: list[str] = []
         if self._path is not None:
             self._path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _rehydrate(self, thread_id: str) -> None:
+        """Recover a run's chain position from the persisted log.
+
+        Chain state lives in memory, but a run does not: the whole point of the
+        HITL interrupt is that the process can exit and a human can resume the
+        run hours later, from the CLI or from the Streamlit console -- a
+        different process every time.  Without this, each new process would
+        restart the run's chain at sequence 0 against the genesis hash, and
+        ``verify_chain`` would then report tampering on a completely honest run.
+
+        Cost is one pass over the log per thread_id per process.  That is fine
+        for a local deployment and is the reason an external append-only sink
+        (which can answer "last event for this run" directly) is the right
+        answer at volume.
+        """
+        if thread_id in self._rehydrated:
+            return
+        self._rehydrated.add(thread_id)
+
+        if self._path is None or not self._path.exists():
+            return
+
+        events = self.read_events(thread_id)
+        if not events:
+            return
+
+        tail = max(events, key=lambda e: e.sequence)
+        self._sequence[thread_id] = tail.sequence + 1
+        self._last_hash[thread_id] = tail.event_hash
 
     def record(
         self,
@@ -120,6 +155,7 @@ class AuditLogger:
         safe_summary = redact_obj(summary)
 
         with self._lock:
+            self._rehydrate(thread_id)
             sequence = self._sequence.get(thread_id, 0)
             prev_hash = self._last_hash.get(thread_id, GENESIS_HASH)
 

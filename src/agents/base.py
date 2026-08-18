@@ -24,7 +24,7 @@ from typing import Any
 from src.enums import AgentRole, AuditAction
 from src.security.audit import AuditEvent, AuditLogger
 from src.security.identity import AgentIdentity, get_identity
-from src.security.sanitizer import sanitize_untrusted
+from src.security.sanitizer import UntrustedContent, sanitize_untrusted
 from src.state import SecurityAlert
 from src.tools.base import ToolBroker
 
@@ -113,13 +113,19 @@ class AgentContext:
         return max(0, min(self.identity.max_tool_calls, self.broker.max_calls_per_run - used))
 
 
-def render_alert_for_prompt(alert: SecurityAlert) -> str:
-    """Render an alert as a labelled untrusted-data block.
+def contain_alert(alert: SecurityAlert) -> UntrustedContent:
+    """Sanitise an alert into a labelled, flagged :class:`UntrustedContent`.
 
     The alert is attacker-influenced in exactly the same way a log line is --
     an adversary who can trigger a detection often controls the filename,
     username or command line that ends up in it.  So it gets the same
     containment treatment.
+
+    Callers get the whole :class:`UntrustedContent` rather than just the
+    rendered block because ``injection_flags`` is security-relevant state: it
+    has to reach the policy engine (via ``TriageResult``), not merely decorate
+    a prompt.  Discarding it here is what previously left alert-borne injection
+    invisible to the approval gate.
     """
     assets = "\n".join(
         f"  - {asset.name} ({asset.asset_type}, criticality={asset.criticality}"
@@ -147,8 +153,17 @@ def render_alert_for_prompt(alert: SecurityAlert) -> str:
         f"Raw detection fields:\n{raw_fields or '  (none)'}"
     )
 
-    contained = sanitize_untrusted(body, source=f"alert:{alert.alert_id}")
-    return contained.as_prompt_block(label=f"alert:{alert.alert_id}")
+    return sanitize_untrusted(body, source=f"alert:{alert.alert_id}")
+
+
+def render_alert_for_prompt(alert: SecurityAlert) -> str:
+    """Render an alert as a labelled untrusted-data block for a prompt.
+
+    Thin wrapper over :func:`contain_alert` for callers that only need the
+    prompt text.  Anything that must *act* on the alert's injection flags
+    should call :func:`contain_alert` directly.
+    """
+    return contain_alert(alert).as_prompt_block(label=f"alert:{alert.alert_id}")
 
 
 def alert_summary_text(alert: SecurityAlert) -> str:

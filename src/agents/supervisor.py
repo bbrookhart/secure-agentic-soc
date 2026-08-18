@@ -92,10 +92,23 @@ your reasoning is recorded for audit and for comparison against the policy engin
 )
 
 
-def build_policy_input(state: SOCState) -> PolicyInput:
-    """Project state down to the structured facts the policy engine may consider."""
+def build_policy_input(state: SOCState, *, max_tool_calls: int) -> PolicyInput:
+    """Project state down to the structured facts the policy engine may consider.
+
+    ``max_tool_calls`` comes from the broker that actually enforces the budget,
+    so the DENY-002 threshold and the broker ceiling cannot drift apart.
+
+    The injection flag is the union of every untrusted source seen so far:
+    the alert's own text (recorded by triage) and tool output (recorded by
+    enrichment).  Taking only the latter would miss alert-borne injection
+    entirely on runs that skip enrichment.
+    """
     triage = state.triage_result
     enrichment = state.enrichment_results
+
+    flagged = bool(triage and triage.untrusted_content_flagged) or bool(
+        enrichment and enrichment.untrusted_content_flagged
+    )
 
     return PolicyInput(
         severity=triage.severity if triage else state.alert.reported_severity,
@@ -103,8 +116,8 @@ def build_policy_input(state: SOCState) -> PolicyInput:
         asset_is_critical=state.alert.has_critical_asset,
         proposed_action_risks=tuple(a.risk for a in enrichment.proposed_actions) if enrichment else (),
         tool_calls_used=state.tool_calls_used,
-        max_tool_calls=40,
-        untrusted_content_flagged=bool(enrichment and enrichment.untrusted_content_flagged),
+        max_tool_calls=max_tool_calls,
+        untrusted_content_flagged=flagged,
     )
 
 
@@ -152,6 +165,23 @@ def deterministic_route(state: SOCState, policy_decision: PolicyDecision) -> Rou
             and triage.severity.rank <= Severity.LOW.rank
             and triage.confidence >= 0.70
         )
+        # A routing shortcut may never outrank the approval gate.  R-020 returns
+        # straight to the reporter, so without this guard a "benign" verdict
+        # would carry the run past a policy that demanded a human -- which is
+        # precisely what an attacker crafting benign-looking alert text wants.
+        # Such runs fall through to enrichment instead, so the analyst reaches
+        # the gate with evidence in hand rather than being asked to approve a
+        # verdict no one has tested.
+        if confidently_benign and policy_decision.effect is PolicyEffect.REQUIRE_APPROVAL:
+            return RouteDecision(
+                route=Route.ENRICHMENT,
+                rule_id="R-022",
+                reason=(
+                    f"Triage assessed this as benign, but policy requires human review "
+                    f"({policy_decision.rule_id}); gathering evidence before the gate rather "
+                    "than taking the benign shortcut."
+                ),
+            )
         if confidently_benign:
             return RouteDecision(
                 route=Route.REPORTER,
@@ -243,7 +273,9 @@ def run_supervisor(
     events: list[AuditEvent] = []
 
     # --- 1. Policy evaluation (deterministic, LLM-free) -------------------
-    policy_input = build_policy_input(state)
+    # The budget ceiling is read from the broker that enforces it, so a
+    # reconfigured limit cannot leave policy and enforcement disagreeing.
+    policy_input = build_policy_input(state, max_tool_calls=context.broker.max_calls_per_run)
     policy_decision = policy.evaluate(policy_input)
     events.append(
         context.log(

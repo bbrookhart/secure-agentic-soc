@@ -85,6 +85,12 @@ def build_graph(
     approval_policy = policy or default_policy()
 
     def _context(state: SOCState, role: AgentRole) -> AgentContext:
+        # A run can suspend at the approval interrupt and resume in a different
+        # process, where the broker's in-memory tally starts empty.  Seed it
+        # from checkpointed state so the budget spans the whole run rather than
+        # resetting -- and so the supervisor does not write that empty tally
+        # back over the persisted count.
+        tool_broker.seed_budget(state.run.thread_id, state.tool_calls_used)
         return AgentContext(
             role=role,
             broker=tool_broker,

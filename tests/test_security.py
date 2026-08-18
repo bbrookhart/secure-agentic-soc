@@ -321,3 +321,66 @@ class TestRateLimiter:
         limiter.check("enrichment", "lookup_mitre")
         # As does a different principal.
         limiter.check("triage", "enrich_ioc")
+
+
+class TestAuditChainAcrossProcesses:
+    """A run outlives the process that started it.
+
+    The approval interrupt exists so a human can answer hours later, from the
+    CLI or the Streamlit console -- a different process each time.  Chain state
+    is held in memory, so it has to be recovered from the log, or verification
+    reports tampering on a perfectly honest run.
+    """
+
+    def _record(self, logger, thread_id, summary):
+        return logger.record(
+            thread_id=thread_id,
+            actor=AgentRole.SUPERVISOR,
+            action=AuditAction.ROUTING_DECISION,
+            summary=summary,
+        )
+
+    def test_chain_continues_in_a_second_process(self, tmp_path):
+        path = tmp_path / "audit.jsonl"
+
+        first = AuditLogger(path)
+        for index in range(3):
+            self._record(first, "run-1", f"before restart {index}")
+
+        # A brand-new logger over the same file is exactly what the UI gets.
+        second = AuditLogger(path)
+        resumed = self._record(second, "run-1", "after restart")
+
+        assert resumed.sequence == 3, "resumed run restarted its sequence numbering"
+
+        ok, message = verify_chain(second.read_events("run-1"))
+        assert ok, f"honest run reported as tampered: {message}"
+
+    def test_rehydration_is_per_run(self, tmp_path):
+        path = tmp_path / "audit.jsonl"
+        first = AuditLogger(path)
+        self._record(first, "run-1", "one")
+        self._record(first, "run-1", "two")
+
+        second = AuditLogger(path)
+        fresh = self._record(second, "run-2", "unrelated run")
+        assert fresh.sequence == 0
+        assert fresh.prev_hash == "0" * 64
+
+        ok, _ = verify_chain(second.read_events("run-1"))
+        assert ok
+
+    def test_tampering_is_still_detected_after_rehydration(self, tmp_path):
+        """Recovering chain state must not paper over a real edit."""
+        path = tmp_path / "audit.jsonl"
+        logger = AuditLogger(path)
+        for index in range(3):
+            self._record(logger, "run-1", f"event {index}")
+
+        lines = path.read_text(encoding="utf-8").splitlines()
+        lines[1] = lines[1].replace("event 1", "event 1 (edited)")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        ok, message = verify_chain(AuditLogger(path).read_events("run-1"))
+        assert not ok
+        assert "tampered" in message

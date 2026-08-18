@@ -8,14 +8,17 @@ Method (deliberately in this order):
 
 1. Run the **deterministic classifier tool** first.  Its output is transparent
    and reproducible, and it anchors the LLM.
-2. Ask the LLM to review that assessment with the alert in front of it.  The
+2. Contain the alert text, recording any injection heuristics it matched.  The
+   flags become part of the :class:`~src.state.TriageResult` so they reach the
+   policy engine even when the run never enriches.
+3. Ask the LLM to review that assessment with the alert in front of it.  The
    model may revise severity or category, but it must justify the change.
-3. Reconcile: the LLM's judgement is accepted, except that a downgrade below
+4. Reconcile: the LLM's judgement is accepted, except that a downgrade below
    the deterministic classifier's severity is capped when the classifier saw
    strong aggravating evidence.  A model talked into "this is benign" by
    injected text cannot quietly bury a serious alert.
 
-Step 3 is the security-relevant part.  The LLM has influence over the verdict,
+Step 4 is the security-relevant part.  The LLM has influence over the verdict,
 but not unilateral power to suppress one.
 """
 
@@ -29,7 +32,7 @@ from src.agents.base import (
     SECURITY_PREAMBLE,
     AgentContext,
     alert_summary_text,
-    render_alert_for_prompt,
+    contain_alert,
 )
 from src.enums import AgentRole, AlertCategory, AuditAction, Severity
 from src.llm import structured_completion
@@ -121,9 +124,26 @@ def run_triage(alert: SecurityAlert, context: AgentContext) -> tuple[TriageResul
     baseline_category = AlertCategory(baseline.get("category", AlertCategory.UNKNOWN.value))
     baseline_confidence = float(baseline.get("confidence", 0.3))
 
-    # --- 2. LLM review ----------------------------------------------------
+    # --- 2. Contain the alert text and record what it contained -----------
+    # The flags travel onto the TriageResult and from there into the policy
+    # engine.  This is the only path by which injection carried in the *alert*
+    # (rather than in tool output) can reach the approval gate -- and it must
+    # not depend on enrichment running, since a benign verdict skips it.
+    contained_alert = contain_alert(alert)
+    alert_flags = contained_alert.injection_flags
+    if alert_flags:
+        events.append(
+            context.log(
+                AuditAction.UNTRUSTED_CONTENT_FLAGGED,
+                "prompt-injection heuristics matched in the alert content itself",
+                {"source": f"alert:{alert.alert_id}", "flags": list(alert_flags)},
+                success=False,
+            )
+        )
+
+    # --- 3. LLM review ----------------------------------------------------
     user_prompt = (
-        f"{render_alert_for_prompt(alert)}\n\n"
+        f"{contained_alert.as_prompt_block(label=f'alert:{alert.alert_id}')}\n\n"
         "Deterministic rule-based classification of the above alert:\n"
         f"  severity: {baseline_severity.value}\n"
         f"  category: {baseline_category.value}\n"
@@ -144,7 +164,7 @@ def run_triage(alert: SecurityAlert, context: AgentContext) -> tuple[TriageResul
     )
     events.extend(call.audit_events)
 
-    # --- 3. Reconcile ------------------------------------------------------
+    # --- 4. Reconcile ------------------------------------------------------
     if call.ok and call.parsed is not None:
         llm: TriageLLMOutput = call.parsed
         severity = llm.severity
@@ -183,6 +203,8 @@ def run_triage(alert: SecurityAlert, context: AgentContext) -> tuple[TriageResul
                 llm.suggested_techniques or list(baseline.get("suggested_techniques", []))
             ),
             recommended_next_step=llm.recommended_next_step[:400],
+            untrusted_content_flagged=bool(alert_flags),
+            injection_flags=alert_flags,
             used_llm=True,
         )
     else:
@@ -201,6 +223,8 @@ def run_triage(alert: SecurityAlert, context: AgentContext) -> tuple[TriageResul
             key_observations=tuple(str(o)[:400] for o in baseline.get("key_observations", [])[:8]),
             suggested_techniques=_coerce_technique_ids(list(baseline.get("suggested_techniques", []))),
             recommended_next_step="Enrich indicators and correlate against historical logs.",
+            untrusted_content_flagged=bool(alert_flags),
+            injection_flags=alert_flags,
             used_llm=False,
         )
 
@@ -214,6 +238,7 @@ def run_triage(alert: SecurityAlert, context: AgentContext) -> tuple[TriageResul
                 "confidence": result.confidence,
                 "used_llm": result.used_llm,
                 "suggested_techniques": list(result.suggested_techniques),
+                "injection_flags": list(result.injection_flags),
             },
         )
     )

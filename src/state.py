@@ -203,11 +203,16 @@ class TriageResult(BaseModel):
         description="Candidate ATT&CK technique IDs for the hunter to verify.",
     )
     recommended_next_step: str = ""
+    # Raised when the alert's own text tripped the injection heuristics.  The
+    # alert is attacker-influenced in exactly the way a log line is, so a flag
+    # here must reach the policy engine even on runs that skip enrichment.
+    untrusted_content_flagged: bool = False
+    injection_flags: tuple[str, ...] = ()
     produced_by: AgentRole = AgentRole.TRIAGE
     produced_at: datetime = Field(default_factory=_utc_now)
     used_llm: bool = True
 
-    @field_validator("key_observations", "suggested_techniques", mode="before")
+    @field_validator("key_observations", "suggested_techniques", "injection_flags", mode="before")
     @classmethod
     def _coerce_sequence(cls, value: Any) -> Any:
         return tuple(value) if isinstance(value, list) else value
