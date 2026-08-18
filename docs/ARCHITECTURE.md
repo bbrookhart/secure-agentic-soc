@@ -232,7 +232,8 @@ src/
 │   ├── identity.py    Principals and the capability matrix
 │   ├── policy.py      Deterministic HITL rules
 │   ├── audit.py       Hash-chained tamper-evident audit log
-│   ├── audit_sink.py  Where events land: local fsync + off-host forwarding
+│   ├── audit_sink.py  Where events land: fsync, rotation, off-host forwarding
+│   ├── signing.py     Ed25519 record signing and chain-head anchoring
 │   ├── approval_identity.py  Proxy-verified approver; fails closed
 │   ├── authz.py       Human authority matrix, separation of duties, quorum
 │   ├── sanitizer.py   Untrusted-content containment + injection heuristics

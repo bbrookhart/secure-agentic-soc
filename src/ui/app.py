@@ -112,9 +112,10 @@ def render_audit_table(state: SOCState) -> None:
 
     # Verify the persisted log (the complete record), falling back to the
     # in-state slice if the run has not been flushed to disk yet.
-    persisted = get_audit_logger().read_events(state.run.thread_id)
+    logger = get_audit_logger()
+    persisted = logger.read_events(state.run.thread_id)
     if persisted:
-        ok, message = verify_chain(persisted)
+        ok, message = verify_chain(persisted, public_key_pem=logger.public_key_pem())
     else:
         ok, message = verify_chain(list(state.audit_log), expect_genesis=False)
 

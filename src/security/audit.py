@@ -30,6 +30,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.enums import AgentRole, AuditAction
 from src.security.audit_sink import AuditSink, JsonlSink, build_sink_from_settings
 from src.security.redaction import redact_obj
+from src.security.signing import (
+    AuditSigner,
+    NullSigner,
+    build_signer_from_settings,
+    verify_signature,
+)
 
 GENESIS_HASH = "0" * 64
 
@@ -56,6 +62,11 @@ class AuditEvent(BaseModel):
     # Tamper-evidence chain.
     prev_hash: str = GENESIS_HASH
     event_hash: str = ""
+    # Origin evidence. The chain proves internal consistency; the signature
+    # proves the record came from this deployment's key, to someone holding
+    # only the public half.
+    signature: str = ""
+    signing_key_id: str = ""
 
     def payload_for_hash(self) -> dict[str, Any]:
         """Canonical subset hashed into the chain (everything but the hash itself)."""
@@ -103,9 +114,14 @@ class AuditLogger:
         echo: bool = False,
         sink: AuditSink | None = None,
         durable: bool = False,
+        signer: AuditSigner | None = None,
     ) -> None:
         self._path = path
         self._echo = echo
+        # Signs each event's chain hash. NullSigner when signing is off, so
+        # the write path is identical either way.
+        self._signer: AuditSigner = signer or NullSigner()
+        self._events_since_anchor = 0
         # The sink decides *where* events land; this class owns the chain.  A
         # bare path still works and stays the readable local copy, so callers
         # that only want a file are unaffected.
@@ -184,7 +200,16 @@ class AuditLogger:
                 success=success,
                 prev_hash=prev_hash,
             )
-            event = event.model_copy(update={"event_hash": event.compute_hash()})
+            event_hash = event.compute_hash()
+            # The signature covers the chain hash, which already commits to
+            # every field of the event and to its predecessor.
+            event = event.model_copy(
+                update={
+                    "event_hash": event_hash,
+                    "signature": self._signer.sign(event_hash.encode("ascii")),
+                    "signing_key_id": self._signer.key_id,
+                }
+            )
 
             self._sequence[thread_id] = sequence + 1
             self._last_hash[thread_id] = event.event_hash
@@ -198,6 +223,58 @@ class AuditLogger:
         if self._sink is None:
             return
         self._sink.write(event)
+
+    # --- Anchoring --------------------------------------------------------
+    def public_key_pem(self) -> str:
+        """Public half of the signing key, for a verifier who holds nothing else."""
+        return self._signer.public_key_pem()
+
+    @property
+    def key_id(self) -> str:
+        return self._signer.key_id
+
+    def anchor(self, thread_id: str) -> AuditEvent | None:
+        """Emit a signed chain-head record for a run.
+
+        This is the part that survives a local rewrite. The anchor states where
+        the chain stood -- sequence and hash -- and is signed and forwarded like
+        any other event. An attacker who later rewrites the log cannot retract
+        an anchor that has already left the host, so the surviving copy and the
+        local file disagree, and disagreement is something an auditor can act on.
+
+        Returns ``None`` when there is nothing to anchor or signing is off: an
+        unsigned anchor would assert integrity it cannot back.
+        """
+        if not self._signer.key_id:
+            return None
+
+        with self._lock:
+            self._rehydrate(thread_id)
+            head_sequence = self._sequence.get(thread_id, 0) - 1
+            head_hash = self._last_hash.get(thread_id, "")
+
+        if head_sequence < 0 or not head_hash:
+            return None
+
+        return self.record(
+            thread_id=thread_id,
+            actor=AgentRole.SUPERVISOR,
+            action=AuditAction.AUDIT_ANCHOR,
+            summary=f"chain head anchored at sequence {head_sequence}",
+            details={
+                "anchored_sequence": head_sequence,
+                "anchored_hash": head_hash,
+                "signing_key_id": self._signer.key_id,
+            },
+        )
+
+    def maybe_anchor(self, thread_id: str, *, interval: int) -> AuditEvent | None:
+        """Anchor every ``interval`` events, so long runs are covered too."""
+        self._events_since_anchor += 1
+        if self._events_since_anchor < interval:
+            return None
+        self._events_since_anchor = 0
+        return self.anchor(thread_id)
 
     def close(self) -> None:
         """Release any handles held by the sink."""
@@ -215,14 +292,42 @@ class AuditLogger:
         return list(health()) if callable(health) else []
 
     # --- Reading / verification -----------------------------------------
+    def _segments(self) -> list[Path]:
+        """Every audit segment, oldest first.
+
+        Rotation splits the log across files, and a single run's events can
+        straddle a boundary, so reading only the live file would look exactly
+        like a truncated chain.
+        """
+        segments = getattr(self._sink, "segments", None)
+        if callable(segments):
+            return list(segments())
+        return [self._path] if self._path is not None and self._path.exists() else []
+
     def read_events(self, thread_id: str | None = None) -> list[AuditEvent]:
-        """Load persisted events, optionally filtered to one run."""
-        if self._path is None or not self._path.exists():
-            return []
+        """Load persisted events across every segment, optionally filtered to one run."""
         events: list[AuditEvent] = []
         corrupt: list[int] = []
 
-        with open(self._path, encoding="utf-8") as handle:
+        for segment in self._segments():
+            events.extend(self._read_segment(segment, thread_id, corrupt))
+
+        if corrupt:
+            # Sequence gaps from dropped lines are also caught by verify_chain;
+            # this makes the cause explicit rather than inferred.
+            self.read_errors.append(
+                f"{len(corrupt)} unparseable audit line(s) at {corrupt[:10]}"
+            )
+        return events
+
+    def _read_segment(
+        self, path: Path, thread_id: str | None, corrupt: list[int]
+    ) -> list[AuditEvent]:
+        events: list[AuditEvent] = []
+        if not path.exists():
+            return events
+
+        with open(path, encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, start=1):
                 line = line.strip()
                 if not line:
@@ -238,17 +343,15 @@ class AuditLogger:
                     continue
                 if thread_id is None or event.thread_id == thread_id:
                     events.append(event)
-
-        if corrupt:
-            # Sequence gaps from dropped lines are also caught by verify_chain;
-            # this makes the cause explicit rather than inferred.
-            self.read_errors.append(
-                f"{len(corrupt)} unparseable audit line(s) at {corrupt[:10]}"
-            )
         return events
 
 
-def verify_chain(events: list[AuditEvent], *, expect_genesis: bool = True) -> tuple[bool, str]:
+def verify_chain(
+    events: list[AuditEvent],
+    *,
+    expect_genesis: bool = True,
+    public_key_pem: str = "",
+) -> tuple[bool, str]:
     """Verify the hash chain for a single run's events.
 
     Returns ``(ok, message)``.  Events must all belong to one ``thread_id``;
@@ -275,6 +378,8 @@ def verify_chain(events: list[AuditEvent], *, expect_genesis: bool = True) -> tu
             return False, "first event is not chained to the genesis hash"
 
     expected_prev: str | None = GENESIS_HASH if expect_genesis else None
+    verified_signatures = 0
+    signed = sum(1 for event in ordered if event.signature)
 
     for offset, event in enumerate(ordered):
         expected_sequence = start + offset
@@ -287,9 +392,24 @@ def verify_chain(events: list[AuditEvent], *, expect_genesis: bool = True) -> tu
             return False, f"chain break at sequence {event.sequence}: prev_hash mismatch"
         if event.compute_hash() != event.event_hash:
             return False, f"content tampered at sequence {event.sequence}: hash mismatch"
+        if public_key_pem and event.signature:
+            if not verify_signature(event.event_hash.encode("ascii"), event.signature, public_key_pem):
+                return False, (
+                    f"signature invalid at sequence {event.sequence}: the record does not "
+                    "come from the expected signing key"
+                )
+            verified_signatures += 1
         expected_prev = event.event_hash
 
     scope = "" if expect_genesis else f" (partial chain: slice starting at sequence {start})"
+    if public_key_pem:
+        # An unsigned event among signed ones is worth naming: it is what a
+        # record inserted while signing was off would look like.
+        gap = "" if signed == len(ordered) else f", {len(ordered) - signed} unsigned"
+        return True, (
+            f"verified {len(ordered)} events{scope} "
+            f"({verified_signatures} signatures valid{gap})"
+        )
     return True, f"verified {len(ordered)} events{scope}"
 
 
@@ -315,6 +435,7 @@ def get_audit_logger() -> AuditLogger:
                         settings.audit_log_path,
                         durable=settings.audit_durable_writes,
                     ),
+                    signer=build_signer_from_settings(),
                 )
     return _default_logger
 

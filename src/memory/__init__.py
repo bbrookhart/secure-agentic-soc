@@ -11,6 +11,7 @@ from src.memory.case_store import (
     attach_case_context,
     entities_of,
     get_case_store,
+    prune,
     record_run,
     set_case_store,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "attach_case_context",
     "entities_of",
     "get_case_store",
+    "prune",
     "record_run",
     "set_case_store",
 ]

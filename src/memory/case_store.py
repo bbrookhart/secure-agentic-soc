@@ -381,6 +381,43 @@ def severity_rank(value: str) -> int:
         return -1
 
 
+def prune(store: CaseStore | None = None, *, older_than: timedelta | None = None) -> int:
+    """Delete case history past the retention period. Returns rows removed.
+
+    Retention here is a real trade-off rather than housekeeping: correlation can
+    only see as far back as this window, so pruning aggressively makes the
+    system forget that a host was compromised last quarter. The default is
+    generous for that reason.
+    """
+    from src.config import get_settings
+
+    resolved = store or get_case_store()
+    # `is not None`, not `or`: timedelta(0) is falsy, and a zero window means
+    # "prune everything" rather than "use the default".
+    window = older_than if older_than is not None else timedelta(days=get_settings().case_retention_days)
+    cutoff = (_utc_now() - window).isoformat()
+
+    with resolved._lock:  # noqa: SLF001 - same module's connection
+        connection = resolved._connection  # noqa: SLF001
+        # Entities first: they are keyed on runs that are about to disappear.
+        connection.execute(
+            "DELETE FROM entities WHERE thread_id IN "
+            "(SELECT thread_id FROM alert_records WHERE recorded_at < ?)",
+            (cutoff,),
+        )
+        removed = connection.execute(
+            "DELETE FROM alert_records WHERE recorded_at < ?", (cutoff,)
+        ).rowcount or 0
+        # Cases with nothing left pointing at them are dead weight.
+        connection.execute(
+            "DELETE FROM cases WHERE case_id NOT IN "
+            "(SELECT DISTINCT case_id FROM alert_records WHERE case_id != '')"
+        )
+        connection.commit()
+
+    return removed
+
+
 def attach_case_context(state: SOCState, store: CaseStore | None = None) -> SOCState:
     """Populate a fresh run's cross-run context before the graph starts.
 

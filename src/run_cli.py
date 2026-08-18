@@ -90,9 +90,12 @@ def cmd_verify_audit(thread_id: str) -> int:
         print(f"No audit events found for thread '{thread_id}'.")
         return 1
 
-    ok, message = verify_chain(events)
+    ok, message = verify_chain(events, public_key_pem=logger.public_key_pem())
     status = _c("VERIFIED", GREEN) if ok else _c("TAMPERING DETECTED", RED)
+    anchors = [e for e in events if e.action.value == "audit_anchor"]
     print(f"  Events : {len(events)}")
+    print(f"  Key    : {logger.key_id or '(signing disabled)'}")
+    print(f"  Anchors: {len(anchors)}")
     print(f"  Status : {status}")
     print(f"  Detail : {message}")
     return 0 if ok else 2
@@ -179,8 +182,9 @@ def _print_audit_trail(state: SOCState) -> None:
     # Verify the *persisted* log, not the state slice: run-level events
     # (run_started / run_completed) are written straight to the logger and
     # never enter graph state, so the on-disk record is the complete chain.
-    persisted = get_audit_logger().read_events(state.run.thread_id)
-    ok, message = verify_chain(persisted)
+    logger = get_audit_logger()
+    persisted = logger.read_events(state.run.thread_id)
+    ok, message = verify_chain(persisted, public_key_pem=logger.public_key_pem())
     status = _c("VERIFIED", GREEN) if ok else _c("TAMPERING DETECTED", RED)
     print(f"\n  Hash chain: {status} -- {message}")
 
@@ -301,6 +305,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     # analyst's decision is the most expensive signal this system produces;
     # until now it was written to the audit log and never read again.
     case_id = record_run(final_state)
+
+    # Anchor the finished chain: a signed statement of where it ended, shipped
+    # off-host by the forwarding sink so a later local rewrite has something
+    # it cannot retract to disagree with.
+    audit.anchor(final_state.run.thread_id)
 
     audit.record(
         thread_id=final_state.run.thread_id,

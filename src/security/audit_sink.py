@@ -32,7 +32,7 @@ import os
 import sys
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters to type checkers
     from src.security.audit import AuditEvent
@@ -47,35 +47,95 @@ class AuditSink(Protocol):
 
 
 class JsonlSink:
-    """Append-only JSONL file with a persistent handle.
+    """Append-only JSONL file with a persistent handle and size-based rotation.
 
     ``durable=True`` flushes and fsyncs every event.  That costs a syscall per
     record and is the right default for an audit log: the events most worth
     having are the ones written immediately before something goes wrong.
+
+    **Rotation does not break the chain.** Segments are numbered
+    (``audit.jsonl``, ``audit.jsonl.1``, …) and a run's events may straddle a
+    boundary, so verification has to read every segment -- which
+    :meth:`AuditLogger.read_events` does, oldest first. Nothing is rewritten on
+    rotation; the bytes simply move to a new name.
+
+    **Retention deletes evidence, so it is bounded and deliberate** (NIST 800-53
+    AU-11). ``max_segments`` caps disk use; anything discarded is gone, which is
+    the argument for forwarding events off-host, where retention is somebody
+    else's policy and not tied to this volume's size.
     """
 
-    def __init__(self, path: Path, *, durable: bool = True) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        durable: bool = True,
+        max_bytes: int = 0,
+        max_segments: int = 10,
+    ) -> None:
         self.path = Path(path)
         self.durable = durable
+        self.max_bytes = max_bytes
+        self.max_segments = max(1, max_segments)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._handle: object | None = None
+        self._handle: Any = None
         self._lock = threading.Lock()
 
     def write(self, event: AuditEvent) -> None:
+        line = event.to_jsonl() + "\n"
         with self._lock:
+            self._rotate_if_needed(len(line.encode("utf-8")))
             handle = self._handle
             if handle is None:
                 handle = open(self.path, "a", encoding="utf-8")  # noqa: SIM115 - held open deliberately
                 self._handle = handle
-            handle.write(event.to_jsonl() + "\n")  # type: ignore[attr-defined]
-            handle.flush()  # type: ignore[attr-defined]
+            handle.write(line)
+            handle.flush()
             if self.durable:
-                os.fsync(handle.fileno())  # type: ignore[attr-defined]
+                os.fsync(handle.fileno())
+
+    def _rotate_if_needed(self, incoming_bytes: int) -> None:
+        """Roll to a new segment before the current one exceeds its budget."""
+        if self.max_bytes <= 0:
+            return
+        try:
+            current = self.path.stat().st_size
+        except OSError:
+            return
+        if current + incoming_bytes <= self.max_bytes:
+            return
+
+        if self._handle is not None:
+            self._handle.close()
+            self._handle = None
+
+        # Shift segments down; the oldest falls off the end.
+        oldest = self.path.with_suffix(self.path.suffix + f".{self.max_segments}")
+        if oldest.exists():
+            oldest.unlink()
+        for index in range(self.max_segments - 1, 0, -1):
+            source = self.path.with_suffix(self.path.suffix + f".{index}")
+            if source.exists():
+                source.rename(self.path.with_suffix(self.path.suffix + f".{index + 1}"))
+        if self.path.exists():
+            self.path.rename(self.path.with_suffix(self.path.suffix + ".1"))
+
+    def segments(self) -> list[Path]:
+        """Every segment, oldest first. Verification must read all of them."""
+        rotated: list[tuple[int, Path]] = []
+        for candidate in self.path.parent.glob(self.path.name + ".*"):
+            suffix = candidate.name.rsplit(".", 1)[-1]
+            if suffix.isdigit():
+                rotated.append((int(suffix), candidate))
+        ordered = [path for _, path in sorted(rotated, reverse=True)]
+        if self.path.exists():
+            ordered.append(self.path)
+        return ordered
 
     def close(self) -> None:
         with self._lock:
             if self._handle is not None:
-                self._handle.close()  # type: ignore[attr-defined]
+                self._handle.close()
                 self._handle = None
 
 
@@ -197,7 +257,12 @@ def build_sink_from_settings(path: Path, *, durable: bool = True) -> AuditSink:
     from src.config import get_settings
 
     settings = get_settings()
-    local = JsonlSink(path, durable=durable)
+    local = JsonlSink(
+        path,
+        durable=durable,
+        max_bytes=settings.audit_max_segment_bytes,
+        max_segments=settings.audit_max_segments,
+    )
     forwarders: list[AuditSink] = []
 
     if settings.audit_forward_url:

@@ -101,6 +101,48 @@ class Settings(BaseSettings):
         description="HTTP collector receiving every audit event as it is written.",
     )
     audit_forward_token: SecretStr | None = Field(default=None)
+    # Signing gives non-repudiation to a verifier holding only the public key
+    # (AU-10) -- verification stops requiring the power to forge. It does not
+    # stop an attacker who holds the key; see src/security/signing.py.
+    # Retention (AU-11). Rotation caps disk use; anything past the last
+    # segment is deleted, which is why forwarding matters -- off-host
+    # retention is not bounded by this volume.
+    audit_max_segment_bytes: int = Field(
+        default=64 * 1024 * 1024,
+        ge=0,
+        description="Roll to a new audit segment past this size. 0 disables rotation.",
+    )
+    audit_max_segments: int = Field(default=10, ge=1)
+    # Encryption at rest (SC-28) is a volume-level deployment concern, not an
+    # application one: app-level encryption would put the keys in the same
+    # process as the data it protects. This flag records that the operator has
+    # provided it, so the evidence bundle states a fact rather than a hope.
+    state_volume_encrypted: bool = Field(
+        default=False,
+        description=(
+            "Set true when the state volume is encrypted at rest. Purely declarative: "
+            "the application cannot verify it, and says so."
+        ),
+    )
+    case_retention_days: int = Field(
+        default=365,
+        ge=1,
+        description="Prune case history older than this. Correlation cannot see past it.",
+    )
+    audit_signing_enabled: bool = Field(default=True)
+    audit_signing_key_path: Path = Field(
+        default=PROJECT_ROOT / "state" / "audit" / "signing-key.pem",
+        description="Ed25519 private key. Production should use a KMS or HSM instead.",
+    )
+    audit_anchor_interval: int = Field(
+        default=25,
+        ge=1,
+        description=(
+            "Emit a signed chain-head anchor every N events. Anchors that have "
+            "left the host cannot be retracted, so a later local rewrite diverges "
+            "from them."
+        ),
+    )
     audit_syslog_address: str | None = Field(
         default=None,
         description="Syslog target, e.g. '/dev/log' or 'collector.internal:514'.",

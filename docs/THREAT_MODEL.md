@@ -163,11 +163,17 @@ $ python -m src.run_cli --verify-audit run-63ea7da46446
 > the whole chain from any point forward. Detecting that requires an anchor outside the
 > attacker's control.
 >
-> Set `SOC_AUDIT_FORWARD_URL` or `SOC_AUDIT_SYSLOG_ADDRESS` so every event also lands in
-> append-only storage under different credentials (SIEM, WORM bucket, signed remote log). A
-> later local rewrite then diverges from a copy it cannot retract, and divergence is the
-> detection. Unforwarded, this remains the largest gap, and **it is not fixable inside the
-> process.**
+> Two controls narrow it. Events are **Ed25519-signed**, so an attacker who recomputes the
+> chain produces a log that still verifies structurally but fails signature verification
+> against the public key — demonstrated in `tests/test_audit_integrity.py`. And signed
+> **chain-head anchors** are forwarded off-host (`SOC_AUDIT_FORWARD_URL` /
+> `SOC_AUDIT_SYSLOG_ADDRESS`), so a rewritten log disagrees with a statement the attacker
+> cannot retract.
+>
+> **Neither helps against an attacker holding the signing key.** With the key on local disk,
+> code execution still means forgery. The honest fix is a KMS or HSM so the application can
+> sign without reading the key; `AuditSigner` in `src/security/signing.py` is the seam for
+> it. Unforwarded and unsigned, this remains **not fixable inside the process.**
 
 > [!IMPORTANT]
 > **The conjunction above is doing real work, and it is fragile.** The argument reads *"write
@@ -281,7 +287,7 @@ log ID or indicator, and the whole reasoning chain is inspectable.
 | Area | Status |
 |:--|:--|
 | **Authentication and multi-tenancy** | The Streamlit UI has **no login**. Anyone who can reach port 8501 can approve incidents. Compose binds it to `127.0.0.1` for this reason. Do not expose it without an authenticating proxy. |
-| **Encryption at rest** | Checkpoints and audit logs are unencrypted on the state volume. |
+| **Encryption at rest** | A volume-level deployment concern (SC-28). App-level encryption would put the keys in the process holding the data, so it is deliberately not done here. `SOC_STATE_VOLUME_ENCRYPTED` records the operator's assertion for the evidence bundle; the application cannot verify it and says so. |
 | **Model supply chain** | Model weight integrity is delegated to Ollama. |
 | **Denial of service** | Against the model server itself. |
 | **Side channels** | Timing, memory, against the host. |

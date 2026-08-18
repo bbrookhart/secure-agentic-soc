@@ -159,5 +159,8 @@ class AuditAction(str, Enum):
     # "Someone tried and was refused" -- the event a reviewer looks for, and
     # which had no representation before human authorization existed.
     AUTHORIZATION_DENIED = "authorization_denied"
+    # A signed statement of where the chain stood, forwarded off-host so a
+    # later local rewrite has something it cannot retract to disagree with.
+    AUDIT_ANCHOR = "audit_anchor"
     STATE_TRANSITION = "state_transition"
     ERROR = "error"
