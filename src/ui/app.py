@@ -34,6 +34,10 @@ from src.ingest import (  # noqa: E402
     parse_alert,
     resolve_alert,
 )
+from src.security.approval_identity import (  # noqa: E402
+    UnauthenticatedApproval,
+    require_identity,
+)
 from src.security.audit import get_audit_logger, verify_chain  # noqa: E402
 from src.security.identity import capability_matrix  # noqa: E402
 from src.security.policy import default_policy  # noqa: E402
@@ -55,6 +59,19 @@ SEVERITY_COLOUR = {
 def get_graph() -> Any:
     """Compile the graph once per session, with durable checkpointing."""
     return build_graph(checkpointer=build_checkpointer())
+
+
+def _request_headers() -> dict[str, str]:
+    """Headers for the current request, or empty when unavailable.
+
+    ``st.context`` is only populated inside a live script run; it is absent in
+    tests and older Streamlit builds. Returning empty makes the caller fail
+    closed rather than fabricating an identity.
+    """
+    try:
+        return dict(st.context.headers)
+    except Exception:  # noqa: BLE001 - no headers means no identity, which is handled
+        return {}
 
 
 def _config(thread_id: str) -> dict[str, Any]:
@@ -148,8 +165,24 @@ def render_approval_panel(thread_id: str, request: dict[str, Any]) -> None:
     else:
         st.caption("No containment actions were drafted for this incident.")
 
+    # Who is approving is not something the approver gets to assert. The
+    # identity comes from the authenticating proxy in front of this console;
+    # without one, the gate refuses to record a decision at all.
+    try:
+        identity = require_identity(_request_headers())
+    except UnauthenticatedApproval as exc:
+        st.error(f"**Approval unavailable** — {exc}")
+        return
+
+    if identity.source == "unauthenticated":
+        st.warning(
+            "No authenticating proxy is configured. This decision will be recorded as "
+            "**unverified** in the audit trail."
+        )
+    else:
+        st.caption(f"Approving as **{identity.display}** (verified by proxy)")
+
     with st.form(f"approval-{request.get('request_id')}"):
-        analyst = st.text_input("Your name", value="analyst")
         notes = st.text_area("Decision notes", placeholder="Rationale, scope limits, follow-ups…")
         approve_col, reject_col = st.columns(2)
         approved = approve_col.form_submit_button("✅ Approve", use_container_width=True)
@@ -161,7 +194,8 @@ def render_approval_panel(thread_id: str, request: dict[str, Any]) -> None:
         decision = {
             "request_id": request.get("request_id", ""),
             "approved": bool(approved),
-            "decided_by": analyst or "analyst",
+            "decided_by": identity.username,
+            "identity_source": identity.source,
             "notes": notes,
             "approved_action_ids": [a["action_id"] for a in actions] if approved else [],
         }

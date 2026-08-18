@@ -119,9 +119,19 @@ def _print_approval_request(payload: dict[str, Any]) -> None:
 
 def _resolve_decision(args: argparse.Namespace) -> dict[str, Any]:
     if args.approve:
-        return {"approved": True, "decided_by": args.analyst, "notes": "Approved via --approve flag."}
+        return {
+            "approved": True,
+            "decided_by": args.analyst,
+            "identity_source": "cli_flag",
+            "notes": "Approved via --approve flag.",
+        }
     if args.reject:
-        return {"approved": False, "decided_by": args.analyst, "notes": "Rejected via --reject flag."}
+        return {
+            "approved": False,
+            "decided_by": args.analyst,
+            "identity_source": "cli_flag",
+            "notes": "Rejected via --reject flag.",
+        }
 
     if not sys.stdin.isatty():
         # Fail closed when nobody can answer.
@@ -129,6 +139,7 @@ def _resolve_decision(args: argparse.Namespace) -> dict[str, Any]:
         return {
             "approved": False,
             "decided_by": "system",
+            "identity_source": "system_default",
             "notes": "No interactive analyst available; rejected by default.",
         }
 
@@ -136,10 +147,20 @@ def _resolve_decision(args: argparse.Namespace) -> dict[str, Any]:
         answer = input(f"\n  {_c('Approve this incident handling? [y/N]: ', BOLD)}").strip().lower()
         if answer in {"y", "yes"}:
             notes = input("  Notes (optional): ").strip()
-            return {"approved": True, "decided_by": args.analyst, "notes": notes}
+            return {
+                "approved": True,
+                "decided_by": args.analyst,
+                "identity_source": "cli_operator",
+                "notes": notes,
+            }
         if answer in {"", "n", "no"}:
             notes = input("  Reason for rejection (optional): ").strip()
-            return {"approved": False, "decided_by": args.analyst, "notes": notes}
+            return {
+                "approved": False,
+                "decided_by": args.analyst,
+                "identity_source": "cli_operator",
+                "notes": notes,
+            }
         print("  Please answer 'y' or 'n'.")
 
 
@@ -300,7 +321,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ephemeral", action="store_true", help="Use an in-memory checkpointer.")
     parser.add_argument("--approve", action="store_true", help="Auto-approve any HITL gate (non-interactive).")
     parser.add_argument("--reject", action="store_true", help="Auto-reject any HITL gate (non-interactive).")
-    parser.add_argument("--analyst", default="cli-analyst", help="Name recorded as the deciding analyst.")
+    parser.add_argument(
+        "--analyst",
+        default="cli-analyst",
+        help="Name recorded as the deciding analyst. Self-asserted: the audit trail marks "
+        "CLI decisions as such, since only the console can verify an identity.",
+    )
     parser.add_argument("--quiet-audit", action="store_true", help="Suppress the audit trail printout.")
 
     args = parser.parse_args(argv)

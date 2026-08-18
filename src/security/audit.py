@@ -28,6 +28,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.enums import AgentRole, AuditAction
+from src.security.audit_sink import AuditSink, JsonlSink, build_sink_from_settings
 from src.security.redaction import redact_obj
 
 GENESIS_HASH = "0" * 64
@@ -95,9 +96,22 @@ class AuditLogger:
     processes still produces one unbroken chain.
     """
 
-    def __init__(self, path: Path | None = None, *, echo: bool = False) -> None:
+    def __init__(
+        self,
+        path: Path | None = None,
+        *,
+        echo: bool = False,
+        sink: AuditSink | None = None,
+        durable: bool = False,
+    ) -> None:
         self._path = path
         self._echo = echo
+        # The sink decides *where* events land; this class owns the chain.  A
+        # bare path still works and stays the readable local copy, so callers
+        # that only want a file are unaffected.
+        self._sink = sink
+        if self._sink is None and path is not None:
+            self._sink = JsonlSink(path, durable=durable)
         self._lock = threading.Lock()
         # Per-thread_id chain state, so concurrent runs do not interleave hashes.
         self._sequence: dict[str, int] = {}
@@ -181,13 +195,24 @@ class AuditLogger:
         return event
 
     def _write(self, event: AuditEvent) -> None:
-        if self._path is None:
+        if self._sink is None:
             return
-        # Line-buffered append + fsync-free write: durable enough for a local
-        # demo, and each line is self-contained so a crash truncates at most
-        # one record.
-        with open(self._path, "a", encoding="utf-8") as handle:
-            handle.write(event.to_jsonl() + "\n")
+        self._sink.write(event)
+
+    def close(self) -> None:
+        """Release any handles held by the sink."""
+        if self._sink is not None:
+            self._sink.close()
+
+    def forwarding_health(self) -> list[dict[str, Any]]:
+        """Forwarder failure counts, or an empty list when nothing is forwarded.
+
+        Surfaced so the UI can show that off-host forwarding has stopped.
+        Forwarding that fails silently is worse than none at all: it looks like
+        a protection that is not actually there.
+        """
+        health = getattr(self._sink, "forwarding_health", None)
+        return list(health()) if callable(health) else []
 
     # --- Reading / verification -----------------------------------------
     def read_events(self, thread_id: str | None = None) -> list[AuditEvent]:
@@ -286,6 +311,10 @@ def get_audit_logger() -> AuditLogger:
                 _default_logger = AuditLogger(
                     settings.audit_log_path,
                     echo=os.environ.get("SOC_ECHO_AUDIT", "").lower() in {"1", "true", "yes"},
+                    sink=build_sink_from_settings(
+                        settings.audit_log_path,
+                        durable=settings.audit_durable_writes,
+                    ),
                 )
     return _default_logger
 

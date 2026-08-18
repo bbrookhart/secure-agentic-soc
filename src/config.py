@@ -83,6 +83,39 @@ class Settings(BaseSettings):
         description="Hard truncation limit applied to any tool/RAG output before it reaches a prompt.",
     )
 
+    # --- Audit durability and forwarding ---------------------------------
+    # The local hash chain is tamper-evident but rewritable by anyone holding
+    # code execution on this host.  Forwarding each event to storage under
+    # different credentials is what makes a later rewrite detectable, because
+    # the two copies then disagree.  See src/security/audit_sink.py.
+    audit_durable_writes: bool = Field(
+        default=True,
+        description="fsync every audit record. An unflushed audit line is not evidence.",
+    )
+    audit_forward_url: str | None = Field(
+        default=None,
+        description="HTTP collector receiving every audit event as it is written.",
+    )
+    audit_forward_token: SecretStr | None = Field(default=None)
+    audit_syslog_address: str | None = Field(
+        default=None,
+        description="Syslog target, e.g. '/dev/log' or 'collector.internal:514'.",
+    )
+
+    # --- Approval console authentication ---------------------------------
+    # The approval gate is the most security-critical control in the system and
+    # the UI has no authentication of its own.  Front it with an authenticating
+    # proxy and name the header it sets; the console then refuses to record a
+    # decision without a verified identity.
+    approval_identity_header: str = Field(
+        default="X-Forwarded-User",
+        description="Request header carrying the proxy-verified analyst identity.",
+    )
+    require_authenticated_approval: bool = Field(
+        default=True,
+        description="Refuse to record approvals when no verified identity is present.",
+    )
+
     # --- Optional secrets (never placed in prompts) ----------------------
     # Present to demonstrate correct secret handling; the shipped tools are all
     # offline and do not require credentials.
@@ -123,10 +156,11 @@ class Settings(BaseSettings):
     def secret_values(self) -> list[str]:
         """Every configured secret, for registration with the redactor."""
         values: list[str] = []
-        if self.threat_intel_api_key is not None:
-            secret = self.threat_intel_api_key.get_secret_value()
-            if secret:
-                values.append(secret)
+        for candidate in (self.threat_intel_api_key, self.audit_forward_token):
+            if candidate is not None:
+                secret = candidate.get_secret_value()
+                if secret:
+                    values.append(secret)
         return values
 
 

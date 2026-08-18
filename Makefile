@@ -14,8 +14,10 @@ install:  ## Create the virtualenv and install dev dependencies
 run:  ## Run an alert (make run ALERT=alert-001-ransomware)
 	$(PYTHON) -m src.run_cli --alert $(or $(ALERT),alert-001-ransomware)
 
-ui:  ## Launch the Streamlit analyst dashboard
-	.venv/bin/streamlit run src/ui/app.py
+ui:  ## Launch the Streamlit analyst dashboard (local, unauthenticated)
+	@echo "NOTE: running without an authenticating proxy. Approvals will be recorded"
+	@echo "      as 'unauthenticated' in the audit trail. Do not expose this port."
+	SOC_REQUIRE_AUTHENTICATED_APPROVAL=false .venv/bin/streamlit run src/ui/app.py
 
 demo:  ## Full walkthrough: benign alert, then the HITL path, then injection
 	$(PYTHON) -m src.run_cli --alert alert-003-false-positive --quiet-audit

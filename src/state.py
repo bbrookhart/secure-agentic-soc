@@ -457,6 +457,10 @@ class ApprovalDecision(BaseModel):
     request_id: str = ""
     approved: bool
     decided_by: str = Field(default="analyst", max_length=128)
+    # How ``decided_by`` was established. An approval trail whose "who" is
+    # self-asserted answers nothing, so the provenance of the identity is
+    # recorded alongside it rather than left implicit.
+    identity_source: str = Field(default="unauthenticated", max_length=64)
     notes: str = Field(default="", max_length=2000)
     approved_action_ids: tuple[str, ...] = ()
     decided_at: datetime = Field(default_factory=_utc_now)

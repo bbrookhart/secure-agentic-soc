@@ -80,6 +80,17 @@ services:
       SOC_CHECKPOINT_DB: /app/state/checkpoints.sqlite
       SOC_AUDIT_LOG_PATH: /app/state/audit/audit.jsonl
       SOC_CHROMA_DIR: /app/state/chroma
+      # The console is bound to loopback above and has no authentication of its
+      # own. Put an authenticating proxy in front of it, set this to true, and
+      # make sure the proxy STRIPS the identity header from inbound requests
+      # before setting its own. Left false here so the local stack runs; every
+      # decision is then recorded as 'unauthenticated' rather than silently
+      # trusted.
+      SOC_REQUIRE_AUTHENTICATED_APPROVAL: ${SOC_REQUIRE_AUTHENTICATED_APPROVAL:-false}
+      SOC_APPROVAL_IDENTITY_HEADER: ${SOC_APPROVAL_IDENTITY_HEADER:-X-Forwarded-User}
+      # Forward every audit event to storage this container cannot rewrite.
+      SOC_AUDIT_FORWARD_URL: ${SOC_AUDIT_FORWARD_URL:-}
+      SOC_AUDIT_SYSLOG_ADDRESS: ${SOC_AUDIT_SYSLOG_ADDRESS:-}
     volumes:
       - soc-state:/app/state
     networks:

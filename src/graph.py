@@ -297,6 +297,7 @@ def build_graph(
             details={
                 "request_id": request.request_id,
                 "decided_by": decision.decided_by,
+                "identity_source": decision.identity_source,
                 "notes": decision.notes,
                 "approved_action_ids": list(decision.approved_action_ids),
             },

@@ -1,42 +1,13 @@
-"""Alert ingestion.
-
-The trust boundary of the whole system is here: everything downstream treats
-alert content as attacker-influenced, and this is where that content is first
-parsed and validated.  Parsing happens through the strict
-:class:`~src.state.SecurityAlert` model, so a malformed or hostile payload is
-rejected with a clear error rather than propagating half-valid data into the
-graph.
-"""
+"""File-backed alert ingestion: the bundled samples and arbitrary JSON files."""
 
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 
-from pydantic import ValidationError
-
+from src.ingest.base import MAX_ALERT_BYTES, AlertIngestError, parse_alert
 from src.state import SecurityAlert
-
-
-class AlertIngestError(ValueError):
-    """Raised when an alert payload cannot be parsed into a valid alert."""
-
-
-#: Refuse absurdly large payloads outright rather than parsing them.
-MAX_ALERT_BYTES = 512 * 1024
-
-
-def parse_alert(payload: dict) -> SecurityAlert:
-    """Validate a raw alert dictionary."""
-    try:
-        return SecurityAlert.model_validate(payload)
-    except ValidationError as exc:
-        raise AlertIngestError(
-            f"alert failed schema validation with {exc.error_count()} error(s): "
-            + "; ".join(
-                f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()[:5]
-            )
-        ) from exc
 
 
 def load_alert_file(path: Path) -> SecurityAlert:
@@ -99,3 +70,43 @@ def resolve_alert(reference: str) -> SecurityAlert:
 
     available = ", ".join(p.stem for p in list_sample_alerts()) or "(none found)"
     raise AlertIngestError(f"could not resolve alert '{reference}'. Available samples: {available}")
+
+
+class DirectorySource:
+    """Watch a directory for alert files, newest first.
+
+    Position is tracked by filename, so a file rewritten in place is not
+    re-emitted. That is the conservative choice: re-running an investigation on
+    edited evidence is worse than skipping it, and the edit is visible on disk.
+    """
+
+    name = "directory"
+
+    def __init__(self, directory: Path, *, pattern: str = "*.json") -> None:
+        self.directory = Path(directory)
+        self.pattern = pattern
+        self._seen: set[str] = set()
+
+    def poll(self, *, limit: int = 50) -> Iterator[SecurityAlert]:
+        if not self.directory.exists():
+            return
+
+        paths = sorted(
+            self.directory.glob(self.pattern),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        emitted = 0
+        for path in paths:
+            if emitted >= limit:
+                return
+            if path.name in self._seen:
+                continue
+            self._seen.add(path.name)
+            try:
+                yield load_alert_file(path)
+                emitted += 1
+            except AlertIngestError:
+                # A malformed file is skipped, not fatal: one bad alert must not
+                # stop the queue. It stays on disk for a human to look at.
+                continue
