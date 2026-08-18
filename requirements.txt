@@ -1,6 +1,16 @@
 # ---------------------------------------------------------------------------
 # Agentic SOC - runtime dependencies
-# Pinned to compatible minor ranges: reproducible builds without dependency rot.
+#
+# This is the human-edited INPUT manifest, expressed as compatible ranges.
+# It is NOT what gets installed in the image.
+#
+# `requirements.lock` is the installed artifact: every direct and transitive
+# dependency pinned to an exact version with SHA-256 hashes, installed with
+# --require-hashes so a re-uploaded or tampered artifact fails the build rather
+# than shipping. Ranges here would otherwise mean two builds a week apart differ.
+#
+# After editing this file, regenerate the lock:
+#     make lock
 # ---------------------------------------------------------------------------
 
 # --- Orchestration -------------------------------------------------------

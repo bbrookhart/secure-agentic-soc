@@ -1,0 +1,177 @@
+# Continuous integration.
+#
+# The pipeline enforces the distinction the evaluation harness already makes:
+#
+#   * SECURITY INVARIANTS are unconditional. `python -m evals.runner` exits
+#     non-zero when a run completes past an approval it owed, when a proposal is
+#     not proposal-only, when an audit chain fails to verify, or when
+#     configuration reaches a report. Any of those fails the build.
+#
+#   * QUALITY METRICS are reported, never enforced. Severity and category
+#     accuracy move with the model and the corpus. A build that goes red because
+#     one case shifted a band is a build everyone learns to click through, which
+#     costs more than the signal is worth.
+#
+# Everything here runs offline: no model server, no network calls from the
+# pipeline itself. That is the same property the test suite relies on -- the
+# security controls are verified independently of model behaviour.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  # Force the deterministic path. Without this, agents wait out the full LLM
+  # timeout on a runner with no Ollama.
+  SOC_OFFLINE_MODE: "true"
+
+jobs:
+  quality:
+    name: Tests, lint, types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check src tests evals
+
+      - name: Type check
+        run: mypy src evals
+
+      - name: Tests
+        run: pytest -q --cov=src --cov-report=term-missing
+
+  invariants:
+    name: Security invariants (gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # Non-zero exit here means a security property broke, not that the model
+      # got worse. This is the job that must never be made advisory.
+      - name: Evaluate against the labelled corpus
+        run: python -m evals.runner --json eval-report.json
+
+      - name: Publish quality metrics to the job summary
+        if: always()
+        run: python -m evals.summary eval-report.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload evaluation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval-report.json
+          retention-days: 90
+
+  supply-chain:
+    name: Supply chain
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks needs history to scan past commits, not just the tip.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # Goes through scripts/audit_deps.py rather than calling pip-audit
+      # directly, so suppressions can only come from .pip-audit-ignore -- and
+      # that script refuses to run if any suppressed id lacks a written
+      # reachability argument in docs/DEPENDENCY_EXCEPTIONS.md.
+      - name: Dependency vulnerabilities
+        run: python scripts/audit_deps.py
+
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Static analysis
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/python
+            p/security-audit
+            p/secrets
+
+      - name: Generate SBOM
+        run: cyclonedx-py environment --output-format JSON --outfile sbom.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+          retention-days: 90
+
+  container:
+    name: Container build and scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t agentic-soc:${{ github.sha }} .
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: agentic-soc:${{ github.sha }}
+          format: sarif
+          output: trivy.sarif
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Upload scan results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif

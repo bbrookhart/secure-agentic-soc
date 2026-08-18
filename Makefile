@@ -47,6 +47,16 @@ lint:  ## Lint with ruff
 typecheck:  ## Type-check with mypy
 	.venv/bin/mypy src
 
+lock:  ## Regenerate the hash-pinned lockfile from requirements.txt
+	$(PYTHON) -m piptools compile --generate-hashes --output-file=requirements.lock requirements.txt
+
+audit-deps:  ## Check locked dependencies for known vulnerabilities
+	@$(PYTHON) scripts/audit_deps.py
+
+sbom:  ## Generate a CycloneDX SBOM for the current environment
+	$(PYTHON) -m cyclonedx_py environment --output-format JSON --outfile sbom.json
+	@echo "wrote sbom.json"
+
 policy:  ## Print the approval policy and agent capability matrix
 	$(PYTHON) -m src.run_cli --policy
 

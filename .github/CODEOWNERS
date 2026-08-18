@@ -1,0 +1,53 @@
+# Code ownership and required review.
+#
+# The paths below are where a mistake becomes a security defect rather than a
+# bug. They carry the controls that the rest of the system assumes are working:
+# the authority boundary, the capability surface, and the corpus that proves
+# both still hold.
+#
+# Replace @owner with the security reviewer or team, and enable "Require review
+# from Code Owners" in branch protection for this file to have any effect.
+
+* @owner
+
+# --- The control plane -----------------------------------------------------
+# Deterministic, LLM-free, and the reason a compromised model gains nothing.
+# Policy rules, the capability matrix, the audit chain, injection containment,
+# redaction, and the approval identity boundary all live here.
+/src/security/ @owner
+
+# --- The capability surface ------------------------------------------------
+# Every tool an agent can reach, and the broker that authorises each call. A new
+# tool here widens what a successful injection is worth.
+/src/tools/ @owner
+
+# --- Authority and routing -------------------------------------------------
+# The deterministic router and the human-approval interrupt. Changes here can
+# reorder or bypass the gate.
+/src/agents/supervisor.py @owner
+/src/graph.py @owner
+
+# --- The trust boundary ----------------------------------------------------
+# Every alert source terminates in parse_alert. Changes here decide what a
+# hostile payload can be.
+/src/ingest/ @owner
+
+# --- Cross-run memory ------------------------------------------------------
+# History feeds the policy engine. Changes here can open an injection channel
+# into the one component that is not persuadable.
+/src/memory/ @owner
+
+# --- The evidence that the controls work -----------------------------------
+# Weakening the corpus weakens every claim made from it. In particular, the
+# known-miss injection cases must not be quietly removed.
+/evals/corpus/ @owner
+/evals/runner.py @owner
+
+# --- The gate itself -------------------------------------------------------
+# CI is what makes every control above enforced rather than aspirational.
+/.github/workflows/ @owner
+
+# --- Security documentation ------------------------------------------------
+/SECURITY.md @owner
+/docs/THREAT_MODEL.md @owner
+/docs/CONTROLS.md @owner

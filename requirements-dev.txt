@@ -1,6 +1,27 @@
+# ---------------------------------------------------------------------------
+# Development and CI tooling.
+#
+# Pinned to exact versions rather than ranges so a CI run is reproducible: a
+# linter or type checker that silently changes version turns an unrelated pull
+# request red, and a scanner that changes version can silently stop finding
+# things. These are not hash-pinned like requirements.lock, because they never
+# ship in the runtime image -- they run in an ephemeral runner and are not part
+# of the deployed attack surface.
+# ---------------------------------------------------------------------------
+
 -r requirements.txt
 
-pytest>=8.3,<9
-pytest-cov>=6.0,<7
-mypy>=1.13,<2
-ruff>=0.8,<0.13
+# --- Test ----------------------------------------------------------------
+pytest==8.4.2
+pytest-cov==6.3.0
+
+# --- Static analysis -----------------------------------------------------
+mypy==1.20.2
+ruff==0.12.12
+
+# --- Supply chain --------------------------------------------------------
+# pip-tools generates requirements.lock; pip-audit checks it for known CVEs;
+# cyclonedx-bom produces the SBOM published with each build.
+pip-tools==7.6.1
+pip-audit==2.10.1
+cyclonedx-bom==7.3.1

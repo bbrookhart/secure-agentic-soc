@@ -26,8 +26,15 @@ WORKDIR /app
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-COPY requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt
+# Install from the hash-pinned lockfile, not the ranged manifest. --require-hashes
+# makes the build reproducible and refuses any artifact whose content does not
+# match what was reviewed: a compromised or re-uploaded package version fails the
+# install rather than shipping. requirements.txt remains the human-edited input;
+# regenerate the lock with:
+#     pip-compile --generate-hashes --output-file=requirements.lock requirements.txt
+COPY requirements.lock .
+RUN pip install --upgrade pip \
+ && pip install --require-hashes --no-deps -r requirements.lock
 
 # ---------------------------------------------------------------------------
 # Stage 2: runtime

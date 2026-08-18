@@ -1,0 +1,47 @@
+# Local gate, run before CI sees the change.
+#
+# Deliberately fast: lint, types, secrets, and the hygiene checks. The test
+# suite and the security-invariant evaluation run in CI, not here -- a
+# pre-commit hook that takes a minute is a hook people bypass, and a bypassed
+# hook is worse than none because it creates the impression of a gate.
+#
+# Install with:  pre-commit install
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.12.12
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^(src|tests|evals)/
+      - id: ruff-format
+        stages: [manual]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-json
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      # A private key reaching the repository is the failure this whole project
+      # is meant to make impossible elsewhere.
+      - id: detect-private-key
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.28.0
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.20.2
+    hooks:
+      - id: mypy
+        files: ^(src|evals)/
+        additional_dependencies:
+          - pydantic>=2.9
+          - pydantic-settings>=2.6
+        args: [--ignore-missing-imports]
