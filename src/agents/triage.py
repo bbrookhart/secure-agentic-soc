@@ -26,13 +26,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src.agents.base import (
     AgentContext,
     alert_summary_text,
     contain_alert,
 )
+from src.agents.coercion import enum_coercer
 from src.enums import AgentRole, AlertCategory, AuditAction, Severity
 from src.llm import structured_completion
 from src.observability import metrics
@@ -69,6 +70,15 @@ class TriageLLMOutput(BaseModel):
         default="",
         max_length=400,
         description="The single most valuable next investigative action.",
+    )
+
+    # Models write 'Critical' where the enum says 'critical'. Normalise
+    # presentation only; an unrecognised value still fails validation and
+    # falls to the deterministic classifier, which is the correct outcome.
+    _coerce_severity = field_validator("severity", mode="before")(enum_coercer(Severity))
+    # Category may fall back to UNKNOWN; severity may not. See enum_coercer.
+    _coerce_category = field_validator("category", mode="before")(
+        enum_coercer(AlertCategory, unknown=AlertCategory.UNKNOWN)
     )
 
 

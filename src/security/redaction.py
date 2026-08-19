@@ -97,7 +97,12 @@ def redact_obj(obj: Any) -> Any:
     if isinstance(obj, dict):
         out: dict[Any, Any] = {}
         for key, value in obj.items():
-            if isinstance(key, str) and sensitive_key.search(key):
+            # Only *string* values are dropped on a name match. A credential is
+            # text; a number is not. Without this, `input_tokens: 412` matched
+            # the "token" rule and cost accounting arrived in the audit log as
+            # "[REDACTED]" -- protecting nothing and losing the one operational
+            # figure the log was carrying.
+            if isinstance(key, str) and sensitive_key.search(key) and isinstance(value, str):
                 out[key] = REDACTED
             else:
                 out[key] = redact_obj(value)

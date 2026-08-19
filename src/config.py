@@ -39,8 +39,16 @@ class Settings(BaseSettings):
     )
     ollama_model: str = Field(
         default="llama3.2",
-        description="Chat model used by every agent. Must support tool/structured output.",
+        description=(
+            "Default chat model for every agent. Must support tool/structured output. "
+            "Per-role overrides via SOC_MODEL_<ROLE>; see src/model_profiles.py."
+        ),
     )
+    # Reasoning models answer better and cost roughly 5x the latency per call
+    # on modest hardware. Off by default so a full investigation stays
+    # minutes rather than tens of minutes; when on, only the roles that
+    # benefit use it (triage and enrichment).
+    llm_reasoning: bool = Field(default=False)
     # A model tag is mutable: "llama3.2" re-pulled can be different weights
     # with different judgement, and nothing would notice. Pin the digest and
     # a mismatch is refused; leave it unset and the observed digest is still
@@ -52,6 +60,14 @@ class Settings(BaseSettings):
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     llm_timeout_seconds: int = Field(default=120, ge=5, le=600)
     llm_num_ctx: int = Field(default=8192, ge=2048)
+    # Per-role overrides, e.g. SOC_MODEL_TRIAGE=qwen3:8b,
+    # SOC_MODEL_SUPERVISOR=llama3.2. Only worth setting when the host can
+    # hold several models resident at once.
+    model_supervisor: str | None = Field(default=None)
+    model_triage: str | None = Field(default=None)
+    model_enrichment: str | None = Field(default=None)
+    model_reporter: str | None = Field(default=None)
+    model_baseline: str | None = Field(default=None)
 
     # When True, agents skip the LLM entirely and use their deterministic
     # rule-based fallbacks.  Makes the pipeline runnable (and testable) with no
@@ -250,6 +266,17 @@ class Settings(BaseSettings):
             self.case_store_db.parent,
         ):
             path.mkdir(parents=True, exist_ok=True)
+
+    def model_overrides(self) -> dict[str, dict[str, object]]:
+        """Per-role model overrides, keyed by AgentRole value."""
+        mapping = {
+            "supervisor": self.model_supervisor,
+            "triage": self.model_triage,
+            "enrichment": self.model_enrichment,
+            "reporter": self.model_reporter,
+            "baseline": self.model_baseline,
+        }
+        return {role: {"model": model} for role, model in mapping.items() if model}
 
     def secret_values(self) -> list[str]:
         """Every configured secret, for registration with the redactor."""

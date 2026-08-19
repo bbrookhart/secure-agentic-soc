@@ -17,9 +17,10 @@ severity in the write-up.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src.agents.base import AgentContext, render_alert_for_prompt
+from src.agents.coercion import enum_coercer
 from src.enums import AgentRole, AlertCategory, ApprovalStatus, AuditAction, Severity, Verdict
 from src.llm import structured_completion
 from src.prompts import REPORTER as _REPORTER
@@ -47,6 +48,8 @@ class ReporterLLMOutput(BaseModel):
     key_findings: list[str] = Field(default_factory=list, max_length=10)
     recommended_actions: list[str] = Field(default_factory=list, max_length=8)
     caveats: list[str] = Field(default_factory=list, max_length=6)
+
+    _coerce_verdict = field_validator("verdict", mode="before")(enum_coercer(Verdict))
 
 
 def _build_timeline(

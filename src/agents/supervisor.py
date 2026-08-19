@@ -24,9 +24,10 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src.agents.base import AgentContext
+from src.agents.coercion import enum_coercer
 from src.enums import (
     AgentRole,
     AlertCategory,
@@ -74,6 +75,8 @@ class SupervisorLLMOutput(BaseModel):
 
     next_agent: Route = Field(description="Which step should run next.")
     reason: str = Field(max_length=600, description="One or two sentences justifying the choice.")
+
+    _coerce_route = field_validator("next_agent", mode="before")(enum_coercer(Route))
 
 
 SUPERVISOR_SYSTEM_PROMPT = with_preamble(_SUPERVISOR)

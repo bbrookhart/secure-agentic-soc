@@ -18,6 +18,7 @@ Design decisions worth stating:
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import time
@@ -127,25 +128,103 @@ def reset_availability_cache() -> None:
     _availability_cache = None
 
 
-def get_chat_model(temperature: float | None = None, *, json_mode: bool = False) -> Any:
-    """Build a ChatOllama client bound to the configured model."""
+def get_chat_model(
+    temperature: float | None = None,
+    *,
+    json_mode: bool = False,
+    actor: AgentRole | None = None,
+) -> Any:
+    """Build a ChatOllama client for one agent role.
+
+    Model, context and reasoning come from that role's profile, so the
+    supervisor's advisory opinion need not cost what the hunt narrative
+    does. Without a role, the global defaults apply.
+    """
     from langchain_ollama import ChatOllama
 
     from src.config import get_settings
+    from src.model_profiles import profile_for
 
     settings = get_settings()
+    profile = profile_for(actor) if actor is not None else None
+
     kwargs: dict[str, Any] = {
-        "model": settings.ollama_model,
+        "model": profile.model if profile else settings.ollama_model,
         "base_url": settings.ollama_base_url,
-        "temperature": settings.llm_temperature if temperature is None else temperature,
-        "num_ctx": settings.llm_num_ctx,
+        "temperature": (
+            temperature
+            if temperature is not None
+            else (profile.temperature if profile else settings.llm_temperature)
+        ),
+        "num_ctx": profile.num_ctx if profile else settings.llm_num_ctx,
         "client_kwargs": {"timeout": settings.llm_timeout_seconds},
     }
+    if profile is not None:
+        # langchain-ollama calls it `reasoning`; Ollama calls it `think`.
+        kwargs["reasoning"] = profile.reasoning
     if json_mode:
         # Constrained decoding: the server will only emit syntactically valid
         # JSON, which removes the most common small-model failure mode.
         kwargs["format"] = "json"
     return ChatOllama(**kwargs)
+
+
+def _grammar_safe_schema(schema: type[BaseModel]) -> dict[str, Any]:
+    """JSON schema for transport, with string length bounds removed.
+
+    Ollama compiles the schema into a sampling grammar, and its parser rejects
+    ``minLength``/``maxLength`` on strings outright::
+
+        400 Failed to initialize samplers: failed to parse grammar
+
+    Almost every agent schema has a length-bounded string -- ``rationale``,
+    ``hunt_summary``, ``executive_summary``, ``reason`` -- so the tool-calling
+    path was returning 400 for *every* call, on every model, and silently
+    falling through to the JSON fallback. The pipeline worked; it just paid an
+    extra failed call and an audit event each time and never used the strategy
+    it prefers.
+
+    **The constraints are only dropped in transit.** The response is still
+    validated against the real Pydantic model, so length bounds are enforced
+    exactly as before -- they simply stop being expressed as grammar. Nothing
+    about the trust boundary changes: an over-long field still fails validation
+    and still falls back.
+    """
+    document = copy.deepcopy(schema.model_json_schema())
+
+    def relax(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "string":
+                minimum = node.pop("minLength", None)
+                maximum = node.pop("maxLength", None)
+                # Restate the bound in prose rather than dropping it silently.
+                # Removing `minLength` outright made models emit "" for
+                # `rationale`, which then failed strict validation and burned
+                # the whole retry chain -- trading a 400 for a silent fallback,
+                # which is worse because it looks like it worked.
+                hint = _length_hint(minimum, maximum)
+                if hint:
+                    description = str(node.get("description", "")).rstrip()
+                    node["description"] = f"{description} {hint}".strip()
+            for value in node.values():
+                relax(value)
+        elif isinstance(node, list):
+            for value in node:
+                relax(value)
+
+    relax(document)
+    return document
+
+
+def _length_hint(minimum: int | None, maximum: int | None) -> str:
+    """Express a length bound as guidance the model can follow."""
+    if minimum and maximum:
+        return f"(REQUIRED: between {minimum} and {maximum} characters, never empty)"
+    if minimum:
+        return f"(REQUIRED: at least {minimum} characters, never empty)"
+    if maximum:
+        return f"(at most {maximum} characters)"
+    return ""
 
 
 def _extract_json(text: str) -> str:
@@ -224,6 +303,7 @@ def _json_mode_completion(
     system_prompt: str,
     user_prompt: str,
     temperature: float | None,
+    actor: AgentRole | None = None,
 ) -> tuple[T, tuple[int, int]]:
     """Fallback strategy: ask for raw JSON and parse it.
 
@@ -242,7 +322,7 @@ def _json_mode_completion(
         "and do not wrap the JSON in markdown fences."
     )
 
-    model = get_chat_model(temperature=temperature, json_mode=True)
+    model = get_chat_model(temperature=temperature, json_mode=True, actor=actor)
     response = model.invoke([("system", system_prompt), ("human", instruction)])
     content = response.content if hasattr(response, "content") else str(response)
     if isinstance(content, list):  # some backends return content parts
@@ -260,6 +340,11 @@ class StructuredCall(BaseModel):
     parsed: Any = None
     ok: bool = False
     error: str | None = None
+    #: Why the model did not produce usable output. 'unavailable' and
+    #: 'rejected' need different responses -- one is an outage, the other is
+    #: a model whose answer we refused -- and used_llm=False alone conflates
+    #: them into 'the run looked slow'.
+    failure_kind: str = ""
     attempts: int = 0
     duration_ms: float = 0.0
     audit_events: list[AuditEvent] = []
@@ -306,19 +391,26 @@ def structured_completion(
             error="llm_unavailable",
             duration_ms=(time.perf_counter() - started) * 1000,
             audit_events=events,
+            failure_kind="unavailable",
         )
 
     def _tool_calling_strategy() -> tuple[T, tuple[int, int]]:
         # include_raw keeps the underlying message, which is the only place
         # token usage survives; without it the parsed object arrives alone.
-        model = get_chat_model(temperature=temperature).with_structured_output(
-            schema, include_raw=True
+        #
+        # The schema is passed as a grammar-safe dict rather than the model
+        # class: Ollama rejects string length bounds when compiling its
+        # sampler. Validation against the real model happens below, so the
+        # bounds still hold.
+        model = get_chat_model(temperature=temperature, actor=actor).with_structured_output(
+            _grammar_safe_schema(schema), include_raw=True
         )
         envelope = model.invoke([("system", safe_system), ("human", safe_user)])
 
         raw = envelope.get("raw") if isinstance(envelope, dict) else None
         result = envelope.get("parsed") if isinstance(envelope, dict) else envelope
         if isinstance(result, dict):
+            # The strict model, not the relaxed transport schema.
             result = schema.model_validate(result)
         if not isinstance(result, schema):
             # `with_structured_output` yields None when the model fails to emit
@@ -332,6 +424,7 @@ def structured_completion(
             system_prompt=safe_system,
             user_prompt=safe_user,
             temperature=temperature,
+            actor=actor,
         )
 
     # Try tool-calling first (richer schema fidelity), then constrained JSON.
@@ -339,7 +432,12 @@ def structured_completion(
     strategies.append(("json_mode", _json_strategy))
 
     last_error: str | None = None
+    #: Strategies whose failure mode makes retrying them pointless.
+    exhausted: set[str] = set()
+
     for attempt, (strategy_name, strategy) in enumerate(strategies, start=1):
+        if strategy_name in exhausted:
+            continue
         try:
             result, (input_tokens, output_tokens) = strategy()
 
@@ -378,6 +476,14 @@ def structured_completion(
             last_error = f"{type(exc).__name__}: {exc}"
             _breaker_record(ok=False)
             metrics.llm_call(actor=actor.value, outcome="error")
+
+            # A validation error means the model answered and we refused the
+            # answer. At temperature 0 the same prompt yields the same
+            # answer, so repeating this strategy spends another call to be
+            # refused identically. Abandon it and move to a strategy that
+            # carries different guidance.
+            if "ValidationError" in last_error:
+                exhausted.add(strategy_name)
             events.append(
                 audit.record(
                     thread_id=thread_id,
@@ -395,13 +501,27 @@ def structured_completion(
             actor=actor,
             action=AuditAction.LLM_FALLBACK,
             summary=f"all {len(strategies)} LLM attempts failed; using deterministic fallback",
-            details={"schema": schema.__name__, "last_error": (last_error or "")[:500]},
+            details={
+                "schema": schema.__name__,
+                "last_error": (last_error or "")[:500],
+                "failure_kind": (
+                    "rejected"
+                    if last_error and "validation error" in last_error.lower()
+                    else "failed"
+                ),
+            },
         )
     )
+    # The model answered but we would not accept the answer -- a schema or
+    # enum mismatch -- versus it never answering at all. The first is a
+    # compatibility problem with this model and is worth surfacing loudly,
+    # because it silently costs the quality the model was chosen for.
+    kind = "rejected" if last_error and "validation error" in last_error.lower() else "failed"
     return StructuredCall(
         ok=False,
         error=last_error,
         attempts=len(strategies),
         duration_ms=(time.perf_counter() - started) * 1000,
         audit_events=events,
+        failure_kind=kind,
     )
