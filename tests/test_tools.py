@@ -277,6 +277,34 @@ class TestMitreLookup:
         )
         assert result.data["results"] == []
 
+    def test_one_common_word_is_not_a_mapping(self, broker):
+        """The floor must rest on more than a single shared English word.
+
+        A benign red-team alert titled "Credential dumping tool executed on
+        WKS-9001" used to map to T1105 "Ingress Tool Transfer" on the word
+        "tool" alone, scoring exactly at the threshold because one common term
+        can earn points through both a keyword and the technique name. A
+        spurious technique in a report reads as confirmed tradecraft, so the
+        floor now counts *distinct* matching terms.
+        """
+        result = broker.invoke(
+            "lookup_mitre",
+            {"query": "Credential dumping tool executed on WKS-9001 credential access", "limit": 10},
+            principal=AgentRole.ENRICHMENT, thread_id="t1",
+        )
+        mapped = {r["technique_id"] for r in result.data["results"]}
+        assert "T1105" not in mapped, "mapped on the single word 'tool'"
+        # The genuinely relevant technique must survive the stricter floor.
+        assert "T1003" in mapped
+
+    def test_a_curated_phrase_still_matches_on_its_own(self, broker):
+        """One multi-word phrase is specific enough to stand alone."""
+        result = broker.invoke(
+            "lookup_mitre", {"query": "host showed shadow copy deletion overnight"},
+            principal=AgentRole.ENRICHMENT, thread_id="t1",
+        )
+        assert "T1490" in {r["technique_id"] for r in result.data["results"]}
+
 
 class TestIOCEnrichment:
     def test_unknown_indicator_is_unknown_not_benign(self, broker):
@@ -298,3 +326,90 @@ class TestIOCEnrichment:
         for path in sorted(Path("src/tools").glob("*.py")):
             offenders = imported_modules(path) & DANGEROUS_MODULES
             assert offenders == set(), f"{path.name} imports {offenders}"
+
+
+class TestKeywordMatching:
+    """Keyword lists are stems, not whole words -- but only at the front.
+
+    Substring containment matched a keyword anywhere inside a longer word,
+    which is how ``"lure"`` came to match **"failure"** on two corpus cases and
+    how ``"sam"`` (credential dumping) matches "same". Requiring a boundary at
+    both ends would have been worse: security keyword lists are deliberately
+    written as stems, so ``"encrypt"`` must still match "encrypting".
+    """
+
+    def test_a_keyword_does_not_match_mid_word(self):
+        from src.tools.matching import matches
+
+        assert not matches("repeated authentication failures", "lure")
+        assert not matches("the same host was contacted", "sam")
+
+    def test_a_keyword_still_matches_its_own_inflections(self):
+        from src.tools.matching import matches
+
+        assert matches("mass file encryption observed", "encrypt")
+        assert matches("port scanner activity", "scan")
+        assert matches("quarantined before delivery", "quarantine")
+
+    def test_units_after_digits_still_match(self):
+        """"41GB" is a real token boundary in log text."""
+        from src.tools.matching import matches
+
+        assert matches("staged a 41gb archive", "gb")
+
+    def test_numeric_keywords_do_not_match_inside_longer_numbers(self):
+        from src.tools.matching import matches
+
+        assert matches("connected to tcp 445 repeatedly", "445")
+        assert not matches("transferred 14450 bytes", "445")
+
+    def test_the_classifier_no_longer_fires_on_failure(self):
+        """End to end: 'authentication failure' must not imply phishing.
+
+        Asserted on the matched terms rather than the rendered observation
+        string -- the observation legitimately contains the word "failure",
+        and checking for "lure" inside it would repeat the very bug under test.
+        """
+        from src.enums import AlertCategory
+        from src.tools.classify import _CATEGORY_SIGNALS, _score
+
+        text = "repeated authentication failures for one account."
+        _score_value, matched = _score(text, _CATEGORY_SIGNALS[AlertCategory.PHISHING])
+        assert "lure" not in matched
+
+
+class TestEvidenceBasedTechniques:
+    def test_the_classifier_no_longer_asserts_techniques(self):
+        """Techniques came from a fixed per-category list, so one category
+        error produced three technique errors. Mapping is now the ATT&CK
+        tool's job, driven by the alert's own words."""
+        from src.enums import Severity
+        from src.tools.classify import ClassifyAlertInput, classify_alert
+
+        result = classify_alert(ClassifyAlertInput(
+            alert_summary="Large outbound transfer from a backup server overnight.",
+            reported_severity=Severity.MEDIUM,
+        ))
+        assert not result.get("suggested_techniques")
+
+    def test_a_beaconing_alert_maps_to_web_protocol_c2(self, broker):
+        result = broker.invoke(
+            "lookup_mitre",
+            {"query": "Periodic outbound beacon with jitter from a workstation", "limit": 3},
+            principal=AgentRole.ENRICHMENT, thread_id="t1",
+        )
+        assert "T1071.001" in {r["technique_id"] for r in result.data["results"]}
+
+    def test_extending_a_keyword_list_does_not_reweight_it(self, broker):
+        """A repeated common word must score once, not once per keyword.
+
+        Adding the synonym "port sweep" beside "port scan" doubled T1018's
+        score for every alert mentioning a port, and pushed it into an
+        unrelated C2 alert's results.
+        """
+        result = broker.invoke(
+            "lookup_mitre",
+            {"query": "Sustained outbound TLS session on port 443 to a flagged host", "limit": 3},
+            principal=AgentRole.ENRICHMENT, thread_id="t1",
+        )
+        assert "T1018" not in {r["technique_id"] for r in result.data["results"]}

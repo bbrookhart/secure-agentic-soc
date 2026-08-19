@@ -58,8 +58,20 @@ def _format(name: str, value: Any) -> str:
     return str(value)
 
 
-def _delta(name: str, current: Any, baseline: Any) -> str:
-    """Render the change against a baseline, if there is one worth showing."""
+def _delta(
+    name: str,
+    current: Any,
+    baseline: Any,
+    interval: dict[str, Any] | None = None,
+) -> str:
+    """Render the change against a baseline, if there is one worth showing.
+
+    A delta smaller than the metric's own confidence interval is marked as
+    noise rather than coloured as an improvement or a regression. On a 35-case
+    corpus most movements are in that category, and a green arrow next to a
+    number the corpus cannot resolve is worse than no arrow at all -- it
+    invites a decision the evidence does not support.
+    """
     if baseline is None or not isinstance(current, int | float) or not isinstance(baseline, int | float):
         return ""
     difference = current - baseline
@@ -71,8 +83,12 @@ def _delta(name: str, current: Any, baseline: Any) -> str:
     else:
         magnitude = f"{abs(difference):.1f}"
 
+    sign = "+" if difference > 0 else "−"
+    if interval and abs(difference) <= interval.get("half_width", 0.0):
+        return f"⚪ {sign}{magnitude} (noise)"
+
     improved = difference > 0 if name in _HIGHER_IS_BETTER else difference < 0
-    return f"{'🟢' if improved else '🔴'} {'+' if difference > 0 else '−'}{magnitude}"
+    return f"{'🟢' if improved else '🔴'} {sign}{magnitude}"
 
 
 def render(report: dict[str, Any], baseline: dict[str, Any] | None = None) -> str:
@@ -130,10 +146,16 @@ def render(report: dict[str, Any], baseline: dict[str, Any] | None = None) -> st
         ]
 
     # --- Quality: reported, never enforced ------------------------------
+    intervals = summary.get("intervals", {})
+
     lines += [
         "### Quality metrics",
         "",
         "_Reported, not enforced — these move with the model and the corpus._",
+        "",
+        "Each value carries its 95% Wilson interval. A change smaller than that interval "
+        "is marked ⚪ noise: this corpus cannot resolve it, and it is not evidence for or "
+        "against anything.",
         "",
         "| Metric | Value | vs. baseline |",
         "|:--|--:|--:|",
@@ -155,11 +177,49 @@ def render(report: dict[str, Any], baseline: dict[str, Any] | None = None) -> st
     ):
         if key not in summary:
             continue
+        interval = intervals.get(key)
+        value = _format(key, summary[key])
+        if interval and key in _PERCENT_METRICS:
+            value = f"{value} ±{interval['half_width']:.0%}"
         lines.append(
-            f"| {label} | {_format(key, summary[key])} | {_delta(key, summary[key], base_summary.get(key))} |"
+            f"| {label} | {value} | {_delta(key, summary[key], base_summary.get(key), interval)} |"
         )
 
     lines.append("")
+
+    # --- Calibration ----------------------------------------------------
+    # Confidence no longer gates anything -- HITL-004 was rebuilt on whether
+    # triage could determine a category, after this measurement showed the
+    # stated confidence scoring worse than a constant. It is still reported,
+    # because it is displayed to analysts and because a future gate must not
+    # be built on it again without checking this first.
+    calibration = summary.get("calibration", {})
+    if calibration.get("samples"):
+        reference = 0.25  # the Brier score of always answering 0.5
+        brier = calibration["brier"]
+        lines += [
+            "### Confidence calibration",
+            "",
+            "Triage states a confidence, and analysts read it. It no longer routes "
+            "anything: `HITL-004` was rebuilt on whether triage could determine a "
+            "category at all, because the number below is not informative.",
+            "",
+            "| Measure | Value |",
+            "|:--|--:|",
+            f"| Brier score | {brier:.3f} |",
+            f"| Calibration error | {calibration['ece']:.3f} |",
+            f"| Bias | {calibration['bias']:+.3f} |",
+            "",
+        ]
+        if brier > reference:
+            lines += [
+                "> [!WARNING]",
+                f"> **Brier {brier:.3f} is worse than {reference:.2f}** — the score you would get by",
+                "> ignoring the alert and answering 0.5 every time. The stated confidence is not",
+                "> carrying information about whether the assessment is right, which means the",
+                "> low-confidence approval gate is routing on noise.",
+                "",
+            ]
 
     # Under-calling and missed escalations are the failures that matter in a
     # SOC, so they get called out rather than left in a table row.

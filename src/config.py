@@ -97,12 +97,6 @@ class Settings(BaseSettings):
         default=Severity.HIGH,
         description="Triage severity at or above which human approval is required.",
     )
-    hitl_min_confidence: float = Field(
-        default=0.55,
-        ge=0.0,
-        le=1.0,
-        description="Below this triage confidence, escalate to a human even for low severity.",
-    )
     max_tool_calls_per_run: int = Field(default=40, ge=1, le=500)
     tool_rate_limit_per_minute: int = Field(default=30, ge=1, le=1000)
     max_untrusted_chars: int = Field(
@@ -255,6 +249,19 @@ class Settings(BaseSettings):
     @property
     def log_corpus_path(self) -> Path:
         return self.data_dir / "logs" / "corpus.jsonl"
+
+    @property
+    def generated_log_corpus_path(self) -> Path:
+        """Scenario logs written by ``evals.generate``.
+
+        Kept out of the hand-authored corpus so a generator run can never
+        perturb the cases that already depend on it.
+        """
+        return self.data_dir / "logs" / "generated.jsonl"
+
+    @property
+    def change_records_path(self) -> Path:
+        return self.data_dir / "changes" / "change_records.json"
 
     def ensure_dirs(self) -> None:
         """Create writable directories on first use (idempotent)."""

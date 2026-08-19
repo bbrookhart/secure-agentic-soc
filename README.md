@@ -15,11 +15,11 @@ or reach a capability it was never granted.
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Supervisor-1C3C3C?style=flat-square)](https://langchain-ai.github.io/langgraph/)
 [![Ollama](https://img.shields.io/badge/Ollama-Local_Inference-000000?style=flat-square&logo=ollama&logoColor=white)](https://ollama.com)
-[![Tests](https://img.shields.io/badge/tests-310_passing-3FB950?style=flat-square)](tests/)
+[![Tests](https://img.shields.io/badge/tests-469_passing-3FB950?style=flat-square)](tests/)
 [![Type checked](https://img.shields.io/badge/mypy-strict-2A6DB0?style=flat-square)](pyproject.toml)
 
 [![Local first](https://img.shields.io/badge/🔒_Local_first-no_data_egress-0969DA?style=flat-square)](#security-controls)
-[![Proposal only](https://img.shields.io/badge/⛔_Proposal_only-zero_execution-D1242F?style=flat-square)](#4-proposal-only-response-actions)
+[![Proposal only](https://img.shields.io/badge/⛔_Proposal_only-zero_execution-D1242F?style=flat-square)](#5-proposal-only-response-actions)
 [![OWASP](https://img.shields.io/badge/OWASP-LLM_Top_10_mapped-8250DF?style=flat-square)](docs/THREAT_MODEL.md)
 [![License](https://img.shields.io/badge/License-MIT-6E7781?style=flat-square)](#license)
 
@@ -105,8 +105,8 @@ flowchart TB
 
     SUP{{"<b>SUPERVISOR</b><br/>evaluate policy · route · audit<br/><i>holds zero tools</i>"}}
 
-    SUP -->|"R-010"| TRI["<b>TRIAGE</b><br/>severity · category<br/>confidence · ATT&CK<br/><br/>1 tool"]
-    SUP -->|"R-021 · R-022"| ENR["<b>ENRICHMENT / HUNTER</b><br/>IOC reputation · ATT&CK<br/>log correlation · case history<br/>drafting<br/><br/>5 tools"]
+    SUP -->|"R-010"| TRI["<b>TRIAGE</b><br/>severity · category<br/>confidence · ATT&CK<br/>change verification<br/><br/>2 tools"]
+    SUP -->|"R-021 · R-022 · R-023"| ENR["<b>ENRICHMENT / HUNTER</b><br/>IOC reputation · ATT&CK<br/>log correlation · case history<br/>drafting<br/><i>re-entered while leads remain</i><br/><br/>6 tools"]
     SUP -->|"R-030"| HIL[["<b>⏸ HUMAN APPROVAL</b><br/>graph interrupt()<br/><i>execution suspends</i>"]]
     SUP -->|"R-040"| REP["<b>REPORTER</b><br/>incident synthesis<br/><br/><i>holds zero tools</i>"]
     SUP -->|"R-000 · R-002"| FIN(["✅ END"])
@@ -168,8 +168,8 @@ unrepresentable in the state machine.
 | Agent | Responsibility | Tools held | Max action risk |
 |:--|:--|:--|:--|
 | 🧭 **Supervisor** | Route work, enforce HITL policy | — *none* | `read-only` |
-| 🔍 **Triage** | Severity, category, confidence, candidate ATT&CK | `classify_alert` | `read-only` |
-| 🎯 **Enrichment / Hunter** | IOC reputation, ATT&CK mapping, log correlation, case history, containment drafting | `enrich_ioc` `lookup_mitre` `query_vector_logs` `query_case_history` `draft_containment_proposal` | `disruptive` *(draft only)* |
+| 🔍 **Triage** | Severity, category, confidence, candidate ATT&CK, change verification | `classify_alert` `verify_authorisation` | `read-only` |
+| 🎯 **Enrichment / Hunter** | IOC reputation, ATT&CK mapping, log correlation, case history, containment drafting | `enrich_ioc` `lookup_mitre` `query_vector_logs` `query_case_history` `verify_authorisation` `draft_containment_proposal` | `disruptive` *(draft only)* |
 | 📄 **Reporter** | Synthesise the incident report | — *none* | `read-only` |
 
 > [!NOTE]
@@ -297,7 +297,44 @@ flowchart TB
 Prompt-level defence is treated as the **weakest** layer. The layers that actually hold are
 least privilege and the deterministic gate.
 
-### 4 · Proposal-only response actions
+A fourth condition was added after measurement: **the heuristics saying nothing is not the
+same as the heuristics saying clean.** They are English and Latin-script, so Cyrillic
+homoglyphs or a paragraph of Spanish produce silence, which the rest of the system was
+reading as safety. `assess_analysability()` reports the *limits of the assessment*, and
+`HITL-006` treats "could not assess" as its own reason to involve a human.
+
+### 4 · Authorisation is verified, never believed
+
+Alerts routinely claim authorisation — *"per change ticket CHG-44120"*, *"inside the
+approved maintenance window"*, *"from the authorised red team range"*. Those claims are the
+single most useful signal for closing a false positive, and the most dangerous thing in the
+alert, because **alert text is attacker-influenceable**.
+
+> [!WARNING]
+> Scoring that vocabulary directly out of the alert was tried and measured. It would have
+> suppressed **four attack cases**, including `INJ-002` — an alert written to read as a
+> routine VPN false positive, which scored *higher* on authorisation language than most
+> genuinely benign alerts. An attacker able to write alert text would have gained a
+> one-line suppression phrase for their own intrusion.
+
+So the claim is extracted from the alert (untrusted), and then checked against
+change-management records (trusted) via `verify_authorisation`:
+
+| The alert says | Verified only if |
+|:--|:--|
+| a change reference | a record with that reference **exists** |
+| | its status is **approved**, not withdrawn |
+| | it **covers this asset** |
+| | the activity falls **inside its window** |
+| | the change **explains this behaviour** — an approved patch window does not account for ransomware |
+
+Nothing cited is honoured on its own. Across the corpus this verifies 7 of 10 benign cases
+and **0 of 28** attack cases, and it is what moved category accuracy from 50% to 68%
+(paired test, *p* = 0.016) — because an approved vulnerability scan really *is*
+reconnaissance behaviour, and what makes it a false positive is authorisation, not the
+absence of tradecraft.
+
+### 5 · Proposal-only response actions
 
 > [!IMPORTANT]
 > **Nothing in this system can change a real environment.** There is no shell tool, no HTTP
@@ -311,7 +348,7 @@ Containment "actions" are inert data structures whose `execution_mode` is pinned
 conclusion travels to a human who holds the authority to act on it. **The gap between those two
 things is the control.**
 
-### 5 · Tamper-evident audit trail
+### 6 · Tamper-evident audit trail
 
 Every routing decision, policy evaluation, LLM call, tool invocation and approval is recorded
 with a closed action vocabulary and SHA-256 hash chaining.
@@ -335,20 +372,20 @@ Agents **cannot write to the audit log** — only the broker and node wrappers e
 > Production requires shipping events to append-only external storage.
 > See [docs/THREAT_MODEL.md §T3](docs/THREAT_MODEL.md).
 
-### 6 · Typed state with validated transitions
+### 7 · Typed state with validated transitions
 
 The alert is **frozen and SHA-256 fingerprinted**, and the fingerprint is re-checked on every
 state update — so an agent cannot substitute a softened version of the evidence it was asked to
 analyse.
 
-### 7 · Secret handling
+### 8 · Secret handling
 
 Secrets are never interpolated into prompts. A redaction pass runs at **two chokepoints**:
 every audit write, and every prompt immediately before it reaches the model. Known values are
 scrubbed exactly; credential-shaped patterns (AWS keys, JWTs, bearer tokens, private keys) are
 caught heuristically.
 
-### 8 · Container isolation
+### 9 · Container isolation
 
 <table>
 <tr>
@@ -537,7 +574,7 @@ src/
 
 evals/            35 labelled alerts + scoring runner + baseline comparison
 scripts/          supply-chain tooling (dependency audit wrapper)
-data/             sample alerts · MITRE subset · threat intel · log corpus
+data/             sample alerts · MITRE subset · threat intel · log corpus · change records
 docs/             ARCHITECTURE.md · THREAT_MODEL.md · CONTROLS.md · RUNBOOKS.md
 tests/            310 tests, all offline
 ```
@@ -581,9 +618,100 @@ Three labelling decisions keep the suite from grading itself:
   scored as *"a human saw it"*, not *"the regex matched"*, because that is the claim the
   architecture actually makes. A test asserts these known misses stay in the corpus.
 
-Current deterministic baseline: **all invariants hold**, injection containment **100%**
-including the three cases the heuristics miss, severity in band **86%** with **3%**
-under-called, category accuracy **49%**, **0** missed escalations.
+Current deterministic baseline over **41 cases**: **all invariants hold**, severity in band
+**93% ±8%** with **7%** under-called and **0%** over-called, category accuracy
+**66% ±14%**, escalation precision **97%**, ATT&CK mappings **67%** clean, and injection
+containment **100%**.
+
+Those aggregates are *lower* than the previous 38-case run, and the paired test says why:
+**identical on all 38 shared cases**. The three added cases are multi-host investigation
+scenarios, which are harder than anything in the original corpus. Differencing aggregates
+across a changed denominator would have read this as a regression; it is not one.
+
+Containment reads 100%, and it is worth being precise about why, because it briefly read
+94% and both numbers were honest.
+
+Three corpus cases defeat the pattern detector outright. They were originally escalating
+by accident: unscoped log retrieval dragged an unrelated hostile log line *from a
+different month* into their evidence and raised a flag on that. Scoping retrieval to the
+incident removed the accident and containment fell to 94% — a truer number. Two of the
+three then gained a real control: `HITL-006` fires when the heuristics **could not
+assess** the content rather than when they matched.
+
+The last one, `INJ-008`, is plain English semantic manipulation that no heuristic layer
+sees. It escalates today because the log corpus was dated onto its alerts, which places a
+genuinely hostile ticket note from the same system minutes away. That is legitimate
+correlation rather than coincidence — but it is still *correlation, not detection*, so the
+eval reports the two separately: `alert_payload_detected` asks whether the heuristics saw
+this alert's own text, and for `INJ-008` it remains false. Pooling them would have let the
+detector look better simply because the corpus contained more hostile content.
+
+Every proportion is quoted with its 95% Wilson interval, and that is not decoration.
+At this corpus size a mid-range proportion carries roughly ±15 points, which is wider
+than most differences anyone will want to claim — so `make eval` marks a change smaller
+than the interval as noise rather than colouring it as progress. To compare two systems
+(two models, two prompt sets) use `make eval-paired`, which tests case by case rather
+than differencing aggregates; the pairing cancels case difficulty and is the only thing
+that can resolve a difference on a corpus this size.
+
+Containment is also broken out **per trust boundary**, because a pooled number is
+dominated by alert-borne cases and says nothing about the channels an attacker can
+actually reach:
+
+| Channel | Cases | Contained | Detected |
+|:--|--:|--:|--:|
+| `alert` — the alert's own text | 13 | 100% | 100% |
+| `intel` — a poisoned threat-intel note | 1 | 100% | 100% |
+| `mitre` — a tampered ATT&CK description | 1 | 100% | 100% |
+| `logs` — a hostile log line | 1 | 100% | 100% |
+| `case_history` — a prior alert title | — | no coverage | — |
+
+### It investigates, it does not just classify
+
+The pipeline re-enters enrichment while evidence keeps pointing somewhere new. An alert
+names one host; its logs name a second; the second names a third. Rule `R-023` starts
+another round, bounded by three rounds, a tool-budget floor, and a frontier that only ever
+shrinks.
+
+Measured on generated multi-host scenarios, following leads is worth what you would hope:
+
+| | entity recall | spurious pivots |
+|:--|--:|--:|
+| Single pass | **0%** (0/4) | 0 |
+| Multi-round | **75%** (3/4) | 0 |
+
+Both numbers matter. Recall alone rewards a system that pivots to everything it can see, so
+the corpus includes a single-host control case that **must not** pivot — without it, a loop
+that always fans out would score perfectly.
+
+Three properties keep the loop safe, and each has a test:
+
+- **`R-023` sits below the approval gate.** A run that owes a human stops and asks. Above
+  the gate, an investigation that kept finding new hosts would postpone review indefinitely
+   — and seeding evidence with fresh hostnames is something an attacker can do.
+- **Pivots come from structured fields, never prose.** Targets are read from a log record's
+  `host` column and from enriched indicators, never parsed out of message text and never
+  taken from the model's `pivot_suggestions`. The model may reorder candidates the evidence
+  already produced; it may never add one.
+- **Evidence accumulates, and injection flags OR.** A hostile line found in round one keeps
+  forcing `HITL-005` even if round two comes back clean — otherwise continuing an
+  investigation would discharge the gate the attacker's own payload raised.
+
+ATT&CK mapping is scored too, over the 21 cases where a competent analyst's answer is
+unambiguous: **67% clean, 7 spurious, 0 missed**, up from 10% clean and 42 spurious. The
+label distinguishes *unlabelled* from *expect nothing* — collapsing those would let every
+unscored case count as a pass.
+
+Benign verdicts carry an empty label, matching a deliberate design choice: `_gather_mitre`
+skips technique search entirely for a false-positive verdict, because a spurious ATT&CK
+reference in an FP report reads as confirmed tradecraft. An authorised red-team exercise
+genuinely *is* performing `T1003`, so this is a real trade — the system withholds a true
+mapping to avoid asserting false ones on the cases most likely to be skim-read.
+
+`case_history` has no corpus coverage because no agent currently calls
+`query_case_history`; cross-run context reaches state through `attach_case_context`,
+which copies counts and ids only. The channel is unreachable rather than unguarded, and
+a test asserts both halves of that so it cannot quietly become reachable.
 
 ---
 
@@ -598,15 +726,17 @@ under-called, category accuracy **49%**, **0** missed escalations.
 | **The signing key is the remaining gap** | Records are Ed25519-signed, so a recomputed chain fails verification against the public key, and signed chain-head anchors forwarded off-host cannot be retracted. But an attacker who reaches the key on local disk can still forge. Production should hold it in a KMS or HSM — `AuditSigner` is the seam — and set `SOC_AUDIT_FORWARD_URL` so anchors leave the host. |
 | **Console identity and authority are delegated** | Streamlit has no authentication of its own. Both *who you are* and *what you may approve* come from a proxy-asserted identity and group membership, and the gate fails closed without them — but that is only as good as the deployment: the proxy must strip both headers from inbound requests, and the app must be reachable only through it. `make ui`, `make demo` and the compose stack opt out explicitly for local use; those decisions are recorded as `unauthenticated` and skip role ceilings, which would otherwise be self-granted. |
 | **Single-operator deployments cannot separate duties** | AC-5 requires that whoever starts a run not approve it. With one operator at a CLI those are the same person, so `SOC_REQUIRE_SEPARATION_OF_DUTIES=false` is needed — a real reduction in control, made deliberately rather than by default. |
-| **Injection heuristics are pattern-based** | Will miss novel phrasing, other languages, and semantic manipulation containing no instruction-shaped text. Three such cases are in the eval corpus (`INJ-006`, `INJ-007`, `INJ-008`) and are *measured*, not assumed: they defeat the detector and are still contained, because a miss degrades to least privilege and the policy gate rather than to compromise. |
-| **Rule-based triage is weak on category** | With the model switched off, category accuracy is 49% against the labelled corpus while severity stays in band 86% of the time. The deterministic floor is a floor, not a substitute — but it fails safe: 0 missed escalations, and 3 over-escalations across 35 cases. Run `make eval` for the current numbers. |
+| **Injection heuristics are pattern-based, and now say so** | The patterns are English and Latin-script, so given Cyrillic homoglyphs or Spanish they return nothing — which is *not* the same as returning clean. `assess_analysability()` reports that distinction and `HITL-006` treats "could not assess" as its own reason to involve a human, which is what now catches `INJ-006` and `INJ-007`. `INJ-008` — plain English, no instruction-shaped phrasing, no script anomaly — is caught by nothing and is the honest residual: least privilege still bounds the damage to a report, but no human is required. |
+| **Rule-based triage is weak on category** | With the model switched off, category accuracy is 66% ±14% against the labelled corpus while severity stays in band 93%. The deterministic floor is a floor, not a substitute — but it fails safe, and it is *better than the model*: llama3.2 scores 39% category and 79% severity in band on the same corpus, causing four missed escalations. Run `make eval` for the current numbers. |
+| **Stated confidence is not calibrated, and no longer gates anything** | Triage emits a confidence, and its Brier score is **0.269** — worse than the 0.25 you would score by ignoring the alert and answering 0.5 every time. `HITL-004` used to route on it below a configurable floor. That gate appeared to work only because the classifier caps confidence whenever the category is undetermined, which was the real signal all along; keyed to it directly, the rule says what it means and both unnecessary escalations disappeared (escalation precision 100%). The `SOC_HITL_MIN_CONFIDENCE` knob was removed rather than left doing nothing. Confidence is still displayed and still measured, so a future gate cannot be built on it without seeing this first. |
+| **ATT&CK mappings are evidence-based, and imperfect** | Techniques used to come from a fixed per-category list, so one category error produced three technique errors and only **10%** of mappings were clean. They are now matched against the alert's own words by the ATT&CK tool: **67% clean, 7 spurious, 0 missed** over 21 labelled cases. The remaining seven are single defensible-but-unlabelled alternatives (`T1078` for credential stuffing, `T1041` for exfiltration) rather than nonsense. Two supporting fixes matter as much: keyword matching now requires a leading word boundary (`"lure"` was matching inside **"failure"**), and a repeated common word scores once rather than once per keyword containing it. |
+| **Correlation is entity-exact, and time-scoped** | `query_vector_logs` takes `around`/`window_hours`; enrichment scopes every query to ±72h of the detection. Host scoping was tried and removed — restricting results to hosts already known hid the second host in a lateral-movement chain, which is exactly the evidence an investigation exists to find. Time scoping and the relevance floor suppress unrelated noise without blinding the search. Matching is still exact-entity: an attacker who moves to a differently-named host breaks the link. |
 | **Telemetry is an egress path** | Metrics and traces are off by default. When enabled, the attribute vocabulary is closed and tested — severity, rule id, tool name, outcome — so alert ids, hostnames and free text cannot reach a collector. Widening `ALLOWED_ATTRIBUTES` is a reviewed change, not a convenience. |
-| **Correlation is entity-exact** | Alerts are linked by exact asset name, IP or indicator match. An attacker who moves to a differently-named host breaks the link, and there is no fuzzy or behavioural correlation. |
 | **Default retrieval is lexical, not semantic** | TF-IDF matches *"powershell encoded command"* but not *"obfuscated script execution"*. Set `SOC_EMBEDDING_BACKEND=ollama` for genuine semantic recall. |
 | **Model and prompt changes are governed, not prevented** | A tag is mutable, so the serving digest is recorded on every run and can be pinned (`SOC_OLLAMA_MODEL_DIGEST`) to refuse a swap. Prompts are versioned and hashed, and the eval baseline records which set produced it — but nothing stops a deployment running unpinned prompts against unevaluated weights if an operator chooses to. |
 | **Small models produce mediocre analysis** | `llama3.2` (3B) writes confident prose around thin reasoning. The deterministic controls hold regardless, but quality scales with model size. |
 | **Checkpoint store is integrity-sensitive** | Whoever can write `state/checkpoints.sqlite` controls what gets deserialised on the next resume. Upgrading past `PYSEC-2026-1527` and the msgpack allowlist in `graph.py` close the known execution paths, but the volume still needs the same protection as the audit log. |
-| **Synthetic intel and log corpus** | Deliberately limited coverage. Unknown indicators are reported as *UNKNOWN, not benign*. |
+| **Synthetic intel and log corpus** | Deliberately limited coverage. Unknown indicators are reported as *UNKNOWN, not benign*. The alerts and the log lines were also authored separately, and drifted five weeks apart: every alert was dated February and 50 of 52 log lines January, so with ±72h correlation **36 of 38 cases retrieved no log evidence at all**. Lexical retrieval hid this until time scoping made it visible. The corpus is now dated onto its alerts, and 17 cases still retrieve nothing — those scenarios simply have no logs written for them, which is a coverage gap rather than a dating one. |
 | **This is a triage assistant, not an authority** | Treat output as a junior analyst's first pass. Automation bias is real — the reason confidence is surfaced everywhere and low confidence forces human review. |
 
 Full analysis in **[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)**.
@@ -679,7 +809,6 @@ Copy `.env.example` to `.env`. Everything is optional; defaults run the full sta
 | `SOC_OFFLINE_MODE` | `false` | Skip the LLM entirely, use deterministic fallbacks |
 | `SOC_EMBEDDING_BACKEND` | `tfidf` | `tfidf` (offline) or `ollama` (semantic) |
 | `SOC_HITL_SEVERITY_THRESHOLD` | `high` | Severity at which approval is required |
-| `SOC_HITL_MIN_CONFIDENCE` | `0.55` | Below this, escalate regardless of severity |
 | `SOC_MAX_TOOL_CALLS_PER_RUN` | `40` | Per-run tool budget |
 | `SOC_TOOL_RATE_LIMIT_PER_MINUTE` | `30` | Per-`(agent, tool)` rate limit |
 

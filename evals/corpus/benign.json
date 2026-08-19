@@ -5,6 +5,7 @@
       "severity_band": ["info", "low"],
       "category": "benign_or_false_positive",
       "should_escalate": false,
+      "expected_techniques": [],
       "is_injection": false,
       "notes": "The canonical false positive: both sign-ins came from the corporate VPN egress pool."
     },
@@ -28,6 +29,7 @@
       "severity_band": ["info", "low"],
       "category": "benign_or_false_positive",
       "should_escalate": false,
+      "expected_techniques": [],
       "is_injection": false,
       "notes": "Scanning traffic from the approved scanner during its scheduled window."
     },
@@ -51,6 +53,7 @@
       "severity_band": ["info", "low"],
       "category": "benign_or_false_positive",
       "should_escalate": false,
+      "expected_techniques": [],
       "is_injection": false,
       "notes": "Large outbound transfer that is the nightly backup to the contracted provider."
     },
@@ -74,6 +77,7 @@
       "severity_band": ["info", "low"],
       "category": "benign_or_false_positive",
       "should_escalate": false,
+      "expected_techniques": [],
       "is_injection": false,
       "notes": "Management-tool behaviour that superficially resembles lateral movement."
     },
@@ -97,6 +101,7 @@
       "severity_band": ["info", "low"],
       "category": "benign_or_false_positive",
       "should_escalate": false,
+      "expected_techniques": [],
       "is_injection": false,
       "notes": "Beacon-shaped traffic that is a health check against a staging service."
     },
@@ -120,6 +125,7 @@
       "severity_band": ["info", "low"],
       "category": "benign_or_false_positive",
       "should_escalate": false,
+      "expected_techniques": ["T1566"],
       "is_injection": false,
       "notes": "Real phishing, but blocked before delivery and never clicked. No action needed."
     },
@@ -143,6 +149,7 @@
       "severity_band": ["info", "low"],
       "category": "benign_or_false_positive",
       "should_escalate": false,
+      "expected_techniques": [],
       "is_injection": false,
       "notes": "Genuine attack behaviour, authorised and deconflicted in advance."
     },
@@ -166,6 +173,7 @@
       "severity_band": ["info", "low"],
       "category": "benign_or_false_positive",
       "should_escalate": false,
+      "expected_techniques": [],
       "is_injection": false,
       "notes": "Pure operational noise with no security relevance."
     },
@@ -212,6 +220,7 @@
       "severity_band": ["info", "low"],
       "category": "benign_or_false_positive",
       "should_escalate": true,
+      "expected_techniques": [],
       "is_injection": false,
       "notes": "Benign, but on a business-critical asset. HITL-003 escalates on the asset, and the benign shortcut must not bypass that."
     },

@@ -79,7 +79,16 @@ ALLOWED_TRANSITIONS: dict[Phase, frozenset[Phase]] = {
     Phase.TRIAGING: frozenset({Phase.TRIAGED, Phase.HALTED}),
     Phase.TRIAGED: frozenset({Phase.ENRICHING, Phase.AWAITING_APPROVAL, Phase.REPORTING, Phase.HALTED}),
     Phase.ENRICHING: frozenset({Phase.ENRICHED, Phase.HALTED}),
-    Phase.ENRICHED: frozenset({Phase.AWAITING_APPROVAL, Phase.REPORTING, Phase.HALTED}),
+    # ENRICHING is reachable again from ENRICHED: an investigation may need
+    # several evidence-gathering rounds when the first one surfaces a host
+    # nothing has looked at yet. Bounded by MAX_INVESTIGATION_ROUNDS in the
+    # router and by the supervisor turn limit, so this cannot cycle forever.
+    # It does not widen what AWAITING_APPROVAL can reach, so the property this
+    # machine exists to enforce -- no finishing past an owed approval -- is
+    # untouched.
+    Phase.ENRICHED: frozenset(
+        {Phase.ENRICHING, Phase.AWAITING_APPROVAL, Phase.REPORTING, Phase.HALTED}
+    ),
     Phase.AWAITING_APPROVAL: frozenset({Phase.APPROVED, Phase.REJECTED, Phase.HALTED}),
     Phase.APPROVED: frozenset({Phase.REPORTING, Phase.ENRICHING, Phase.HALTED}),
     Phase.REJECTED: frozenset({Phase.REPORTING, Phase.HALTED}),
@@ -214,6 +223,10 @@ class TriageResult(BaseModel):
     # alert is attacker-influenced in exactly the way a log line is, so a flag
     # here must reach the policy engine even on runs that skip enrichment.
     untrusted_content_flagged: bool = False
+    #: Why the injection heuristics may not have applied to this alert at all
+    #: (mixed script, not recognisably English). Distinct from finding nothing:
+    #: this says the detector could not make a claim either way.
+    analysis_limits: tuple[str, ...] = ()
     injection_flags: tuple[str, ...] = ()
     produced_by: AgentRole = AgentRole.TRIAGE
     produced_at: datetime = Field(default_factory=_utc_now)
@@ -331,6 +344,61 @@ class EnrichmentResults(BaseModel):
         return max(risks, key=order.index) if risks else ActionRisk.READ_ONLY
 
 
+def merge_enrichment(
+    earlier: EnrichmentResults | None, later: EnrichmentResults
+) -> EnrichmentResults:
+    """Accumulate evidence across investigation rounds.
+
+    An investigation that pivots gathers evidence in several passes, and each
+    pass must *add* to the picture rather than replace it. Losing round one's
+    findings when round two returns would mean a report that omits the evidence
+    that justified looking further in the first place.
+
+    The security-relevant part is ``untrusted_content_flagged``: it is ORed,
+    never overwritten. A hostile log line found in round one raises the flag
+    that forces ``HITL-005``, and a clean round two must not clear it -- that
+    would let an attacker discharge the approval gate simply by making the
+    investigation continue.
+    """
+    if earlier is None:
+        return later
+
+    def _dedup(items: tuple[Any, ...], key: Any) -> tuple[Any, ...]:
+        seen: dict[Any, Any] = {}
+        for item in items:
+            seen.setdefault(key(item), item)
+        return tuple(seen.values())
+
+    summaries = [s for s in (earlier.hunt_summary, later.hunt_summary) if s.strip()]
+
+    return later.model_copy(
+        update={
+            "ioc_enrichments": _dedup(
+                earlier.ioc_enrichments + later.ioc_enrichments, lambda e: e.indicator
+            ),
+            "mitre_techniques": _dedup(
+                earlier.mitre_techniques + later.mitre_techniques, lambda t: t.technique_id
+            ),
+            "log_hits": _dedup(earlier.log_hits + later.log_hits, lambda h: h.log_id),
+            "proposed_actions": _dedup(
+                earlier.proposed_actions + later.proposed_actions,
+                lambda a: (a.title, a.target),
+            ),
+            "pivot_suggestions": _dedup(
+                earlier.pivot_suggestions + later.pivot_suggestions, lambda s: s
+            ),
+            "hunt_summary": "\n\n".join(summaries)[:6000],
+            "untrusted_content_flagged": (
+                earlier.untrusted_content_flagged or later.untrusted_content_flagged
+            ),
+            "injection_flags": tuple(
+                sorted(set(earlier.injection_flags) | set(later.injection_flags))
+            ),
+            "used_llm": earlier.used_llm or later.used_llm,
+        }
+    )
+
+
 class TimelineEntry(BaseModel):
     """One row of the incident timeline."""
 
@@ -358,6 +426,10 @@ class IncidentReport(BaseModel):
     proposed_actions: tuple[ProposedAction, ...] = ()
     analyst_notes: str = ""
     caveats: tuple[str, ...] = ()
+    #: How the investigation moved, round by round. The most analyst-legible
+    #: thing a multi-round run produces: it says *why* evidence from a host the
+    #: alert never mentioned is in this report.
+    investigation_chain: tuple[str, ...] = ()
     produced_by: AgentRole = AgentRole.REPORTER
     produced_at: datetime = Field(default_factory=_utc_now)
     used_llm: bool = True
@@ -548,6 +620,18 @@ class SOCState(BaseModel):
     related_run_count: int = Field(default=0, ge=0)
     case_id: str = ""
     duplicate_of: str = ""
+
+    # --- Investigation progress -------------------------------------------
+    # An investigation may take several evidence-gathering rounds: what the
+    # first pass finds decides whether there is anywhere else worth looking.
+    # Both fields are bounded and structured, so the loop is inspectable and
+    # cannot be talked into running forever.
+    investigation_rounds: int = Field(default=0, ge=0)
+    #: Entities already covered by some round, normalised. Prevents a pivot
+    #: from bouncing between two hosts that reference each other.
+    investigated_entities: tuple[str, ...] = ()
+    #: What drove each round, oldest first, for the report's chain of enquiry.
+    investigation_chain: tuple[str, ...] = ()
 
     # --- Human in the loop ------------------------------------------------
     requires_approval: bool = False

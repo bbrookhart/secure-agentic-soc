@@ -30,6 +30,23 @@ class PolicyInput(BaseModel):
 
     severity: Severity = Severity.INFO
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    #: The injection heuristics could not assess the alert's content at all.
+    #:
+    #: Silence from an English-only detector given Cyrillic or Spanish is not a
+    #: clean result, and treating it as one left three corpus cases relying on
+    #: an accident of unscoped log retrieval for their only escalation.
+    content_not_analysable: bool = False
+    #: Triage could not determine what kind of incident this is.
+    #:
+    #: This replaces a confidence threshold as the trigger for HITL-004. The
+    #: stated confidence is measured against this corpus and is no better than
+    #: a constant -- its Brier score is worse than answering 0.5 every time --
+    #: so a gate keyed to it was resting on a number that carries no
+    #: information. It appeared to work only because the classifier caps
+    #: confidence whenever the category is unknown, which is the real signal.
+    #: Keying on that directly says what the rule means and stops the gate
+    #: depending on a self-reported number.
+    category_is_unknown: bool = False
     asset_is_critical: bool = False
     proposed_action_risks: tuple[ActionRisk, ...] = ()
     tool_calls_used: int = 0
@@ -82,16 +99,13 @@ class ApprovalPolicy:
         self,
         *,
         severity_threshold: Severity = Severity.HIGH,
-        min_confidence: float = 0.55,
         rules: Sequence[PolicyRule] | None = None,
     ) -> None:
         self.severity_threshold = severity_threshold
-        self.min_confidence = min_confidence
         self._rules: list[PolicyRule] = list(rules) if rules is not None else self._default_rules()
 
     def _default_rules(self) -> list[PolicyRule]:
         threshold = self.severity_threshold
-        min_confidence = self.min_confidence
 
         return [
             # --- DENY: hard stops -------------------------------------------------
@@ -142,13 +156,24 @@ class ApprovalPolicy:
                 predicate=lambda i: i.asset_is_critical,
             ),
             PolicyRule(
-                rule_id="HITL-004-low-confidence",
+                rule_id="HITL-004-undetermined-category",
                 effect=PolicyEffect.REQUIRE_APPROVAL,
                 reason=(
-                    f"Triage confidence is below {min_confidence:.2f}; a human should "
-                    "confirm rather than let a low-confidence verdict stand."
+                    "Triage could not determine what kind of incident this is; a "
+                    "human should classify it rather than let an undetermined "
+                    "verdict stand."
                 ),
-                predicate=lambda i: i.confidence < min_confidence,
+                predicate=lambda i: i.category_is_unknown,
+            ),
+            PolicyRule(
+                rule_id="HITL-006-content-not-analysable",
+                effect=PolicyEffect.REQUIRE_APPROVAL,
+                reason=(
+                    "The prompt-injection heuristics do not apply to this content "
+                    "(mixed script or not recognisably English), so it has not been "
+                    "assessed rather than assessed as clean."
+                ),
+                predicate=lambda i: i.content_not_analysable,
             ),
             PolicyRule(
                 rule_id="HITL-005-untrusted-content",
@@ -210,5 +235,4 @@ def default_policy() -> ApprovalPolicy:
     settings = get_settings()
     return ApprovalPolicy(
         severity_threshold=settings.hitl_severity_threshold,
-        min_confidence=settings.hitl_min_confidence,
     )

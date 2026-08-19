@@ -16,7 +16,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -45,9 +47,58 @@ class SearchResult:
     relevance: float
 
 
-def load_corpus(path: Path) -> list[LogDocument]:
-    """Read the JSONL log corpus, skipping malformed lines."""
-    documents: list[LogDocument] = []
+def _parse_timestamp(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _apply_scope(
+    results: list[SearchResult],
+    *,
+    around: str | None,
+    window_hours: int,
+    hosts: Sequence[str],
+) -> list[SearchResult]:
+    """Drop hits outside the incident's host set or time window.
+
+    A hit with an unparseable timestamp is *kept*: the point is to remove
+    confidently-irrelevant lines, not to discard evidence because its clock
+    format was unexpected.
+    """
+    host_set = {h.strip().lower() for h in hosts if h and h.strip()}
+    centre = _parse_timestamp(around) if around else None
+    span = timedelta(hours=window_hours)
+
+    kept: list[SearchResult] = []
+    for result in results:
+        if host_set and result.document.host.strip().lower() not in host_set:
+            continue
+        if centre is not None:
+            moment = _parse_timestamp(result.document.timestamp)
+            if moment is not None and abs(moment - centre) > span:
+                continue
+        kept.append(result)
+    return kept
+
+
+def load_corpus(path: Path | Sequence[Path]) -> list[LogDocument]:
+    """Read one or more JSONL log corpora, skipping malformed lines.
+
+    Several paths are supported so hand-authored logs and generated scenario
+    logs can live in separate files. Keeping them apart matters: a generator
+    bug that corrupts its output must not be able to damage the corpus the
+    existing eval cases depend on.
+    """
+    if not isinstance(path, Path):
+        documents: list[LogDocument] = []
+        for item in path:
+            documents.extend(load_corpus(item))
+        return documents
+
+    documents = []
     if not path.exists():
         return documents
 
@@ -105,7 +156,7 @@ class LogVectorStore:
 
     def __init__(
         self,
-        corpus_path: Path,
+        corpus_path: Path | Sequence[Path],
         persist_dir: Path | None = None,
         embedding: EmbeddingBackend | None = None,
     ) -> None:
@@ -192,22 +243,49 @@ class LogVectorStore:
         self.backend_name = f"in-memory:{self.embedding.name}"
 
     # --- Query -----------------------------------------------------------
-    def search(self, query: str, limit: int = 5) -> list[SearchResult]:
-        """Return the ``limit`` most relevant log lines for ``query``."""
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+        *,
+        around: str | None = None,
+        window_hours: int = 72,
+        hosts: Sequence[str] = (),
+    ) -> list[SearchResult]:
+        """Return the ``limit`` most relevant log lines for ``query``.
+
+        ``around``/``window_hours`` and ``hosts`` scope the search before
+        relevance is considered. Both matter because relevance here is lexical:
+        a line from an unrelated host a week later shares vocabulary with the
+        query just as readily as the contemporaneous one, and will outrank it
+        if it happens to use more of the same words. Scoping first makes
+        "relevant" mean *relevant to this incident* rather than *wordy in the
+        same way*.
+        """
         query = (query or "").strip()
         if not query or not self.documents:
             return []
         limit = max(1, min(limit, 25))
 
+        # Over-fetch when scoping, so filtering does not silently return fewer
+        # results than asked for.
+        scoped = bool(around) or bool(hosts)
+        fetch = min(25, limit * 5) if scoped else limit
+
         if self._collection is not None:
             try:
-                return self._search_chroma(query, limit)
+                results = self._search_chroma(query, fetch)
             except Exception:  # noqa: BLE001 - one bad query must not kill the store
                 self._build_fallback()
+                results = self._search_fallback(query, fetch)
+        else:
+            if self._fallback_vectors is None:
+                self._build_fallback()
+            results = self._search_fallback(query, fetch)
 
-        if self._fallback_vectors is None:
-            self._build_fallback()
-        return self._search_fallback(query, limit)
+        if scoped:
+            results = _apply_scope(results, around=around, window_hours=window_hours, hosts=hosts)
+        return results[:limit]
 
     def _search_chroma(self, query: str, limit: int) -> list[SearchResult]:
         query_vector = self.embedding.embed([query])[0]
@@ -265,7 +343,7 @@ def get_log_store() -> LogVectorStore:
         settings = get_settings()
         settings.ensure_dirs()
         _store = LogVectorStore(
-            corpus_path=settings.log_corpus_path,
+            corpus_path=[settings.log_corpus_path, settings.generated_log_corpus_path],
             persist_dir=settings.chroma_dir,
         )
     return _store

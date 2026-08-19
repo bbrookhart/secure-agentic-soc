@@ -146,8 +146,12 @@ class TestInjectionContainment:
         graph.invoke(initial, config=config)
         state = _state_of(graph, config)
 
-        assert state.enrichment_results is not None
-        assert state.enrichment_results.untrusted_content_flagged
+        # Asserted on triage, which is the layer that actually sees this
+        # payload: it is in the alert text. The previous version asserted on
+        # enrichment's flag and passed only because unscoped log retrieval was
+        # dragging an unrelated hostile log line into every investigation.
+        assert state.triage_result is not None
+        assert state.triage_result.untrusted_content_flagged
         assert state.approval_status is ApprovalStatus.PENDING
         assert pending_interrupt(graph, config) is not None
 

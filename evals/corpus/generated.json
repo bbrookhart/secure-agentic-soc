@@ -1,0 +1,113 @@
+[
+  {
+    "case_id": "GEN-001-two-hop-lateral",
+    "expected": {
+      "severity_band": [
+        "medium",
+        "high"
+      ],
+      "category": "lateral_movement",
+      "should_escalate": true,
+      "expected_entities": [
+        "gen-srv-app-12",
+        "gen-srv-db-09"
+      ],
+      "notes": "Single-pass triage sees a service creation on one workstation. The database export two hops away is the actual incident, and is only reachable by following the evidence."
+    },
+    "alert": {
+      "alert_id": "EVAL-GEN-001-two-hop-lateral",
+      "source": "EDR",
+      "title": "Suspicious service creation on HR-WKS-31",
+      "description": "A service was created by a non-administrative account outside any change window, and the binary was written to disk minutes earlier by a process with no software-distribution parent. The account then authenticated off-box. No change ticket references this host.",
+      "detected_at": "2026-03-10T09:20:00Z",
+      "reported_severity": "medium",
+      "assets": [
+        {
+          "name": "HR-WKS-31",
+          "asset_type": "host",
+          "criticality": "high",
+          "owner": "IT"
+        }
+      ],
+      "indicators": [],
+      "raw_event": {
+        "detection_rule": "GEN-RULE-000"
+      }
+    }
+  },
+  {
+    "case_id": "GEN-002-c2-fanout",
+    "expected": {
+      "severity_band": [
+        "high",
+        "critical"
+      ],
+      "category": "command_and_control",
+      "should_escalate": true,
+      "expected_entities": [
+        "gen-wks-91",
+        "gen-srv-file-14"
+      ],
+      "notes": "A shared C2 destination is the pivot. The file server distributing the payload is the root cause and is two hops from the alert."
+    },
+    "alert": {
+      "alert_id": "EVAL-GEN-002-c2-fanout",
+      "source": "EDR",
+      "title": "Beaconing detected from GEN-WKS-88",
+      "description": "Periodic outbound connections with low jitter were observed from a single workstation. The destination is not on any vendor allowlist.",
+      "detected_at": "2026-03-20T09:20:00Z",
+      "reported_severity": "medium",
+      "assets": [
+        {
+          "name": "GEN-WKS-88",
+          "asset_type": "host",
+          "criticality": "high",
+          "owner": "IT"
+        }
+      ],
+      "indicators": [
+        {
+          "indicator_type": "ipv4",
+          "value": "203.0.113.45",
+          "context": "beacon destination"
+        }
+      ],
+      "raw_event": {
+        "detection_rule": "GEN-RULE-001"
+      }
+    }
+  },
+  {
+    "case_id": "GEN-003-single-host-no-pivot",
+    "expected": {
+      "severity_band": [
+        "low",
+        "medium"
+      ],
+      "category": "credential_access",
+      "should_escalate": false,
+      "expected_entities": [],
+      "notes": "The control case. Evidence is genuinely confined to one host, so the frontier must come back empty and the run must stay single-round. Without this, a loop that always pivots would score perfectly."
+    },
+    "alert": {
+      "alert_id": "EVAL-GEN-003-single-host-no-pivot",
+      "source": "EDR",
+      "title": "Failed logon burst on GEN-WKS-52",
+      "description": "Twelve failed interactive logons for one account followed by a success, all from the console of a single managed workstation.",
+      "detected_at": "2026-03-30T09:20:00Z",
+      "reported_severity": "low",
+      "assets": [
+        {
+          "name": "GEN-WKS-52",
+          "asset_type": "host",
+          "criticality": "standard",
+          "owner": "IT"
+        }
+      ],
+      "indicators": [],
+      "raw_event": {
+        "detection_rule": "GEN-RULE-002"
+      }
+    }
+  }
+]

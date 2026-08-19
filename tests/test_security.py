@@ -55,7 +55,7 @@ class TestLeastPrivilege:
 class TestApprovalPolicy:
     @pytest.fixture
     def policy(self):
-        return ApprovalPolicy(severity_threshold=Severity.HIGH, min_confidence=0.55)
+        return ApprovalPolicy(severity_threshold=Severity.HIGH)
 
     def test_high_severity_requires_approval(self, policy):
         decision = policy.evaluate(PolicyInput(severity=Severity.HIGH, confidence=0.9))
@@ -66,10 +66,30 @@ class TestApprovalPolicy:
         decision = policy.evaluate(PolicyInput(severity=Severity.LOW, confidence=0.9))
         assert decision.effect is PolicyEffect.ALLOW
 
-    def test_low_confidence_escalates(self, policy):
-        decision = policy.evaluate(PolicyInput(severity=Severity.LOW, confidence=0.2))
+    def test_undetermined_category_escalates(self, policy):
+        decision = policy.evaluate(
+            PolicyInput(severity=Severity.LOW, confidence=0.9, category_is_unknown=True)
+        )
         assert decision.effect is PolicyEffect.REQUIRE_APPROVAL
-        assert decision.rule_id == "HITL-004-low-confidence"
+        assert decision.rule_id == "HITL-004-undetermined-category"
+
+    def test_stated_confidence_alone_no_longer_gates(self):
+        """The gate must not depend on a number measured to carry no information.
+
+        Triage confidence scores worse than a constant 0.5 on the eval corpus
+        (Brier 0.269 against 0.25), so a threshold on it was arbitrary. It
+        appeared to work only because the classifier caps confidence when the
+        category is undetermined -- which is now the rule, stated directly.
+        A low confidence with a determined category is no longer, on its own,
+        a reason to stop.
+        """
+        from src.security.policy import ApprovalPolicy
+
+        policy = ApprovalPolicy()
+        decision = policy.evaluate(
+            PolicyInput(severity=Severity.LOW, confidence=0.05, category_is_unknown=False)
+        )
+        assert decision.effect is PolicyEffect.ALLOW
 
     def test_critical_asset_escalates(self, policy):
         decision = policy.evaluate(

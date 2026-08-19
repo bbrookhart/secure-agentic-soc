@@ -34,6 +34,26 @@ class QueryVectorLogsInput(BaseModel):
         le=25,
         description="Maximum number of log lines to return.",
     )
+    # Scoping. Retrieval here is lexical, so without these a line from an
+    # unrelated host weeks away can outrank a contemporaneous one purely on
+    # shared vocabulary -- which was observed, and which pulled hostile content
+    # into investigations it had nothing to do with.
+    around: str | None = Field(
+        default=None,
+        max_length=64,
+        description="ISO-8601 timestamp to centre the search on; pairs with window_hours.",
+    )
+    window_hours: int = Field(
+        default=72,
+        ge=1,
+        le=8760,
+        description="Half-width in hours of the time window around 'around'.",
+    )
+    hosts: tuple[str, ...] = Field(
+        default=(),
+        max_length=10,
+        description="Restrict results to these hosts. Empty means no host restriction.",
+    )
 
     @field_validator("query")
     @classmethod
@@ -48,10 +68,21 @@ def query_vector_logs(payload: QueryVectorLogsInput) -> dict[str, Any]:
     from src.rag.vectorstore import get_log_store
 
     store = get_log_store()
-    results = store.search(payload.query, limit=payload.limit)
+    results = store.search(
+        payload.query,
+        limit=payload.limit,
+        around=payload.around,
+        window_hours=payload.window_hours,
+        hosts=payload.hosts,
+    )
 
     return {
         "query": payload.query,
+        "scope": {
+            "around": payload.around,
+            "window_hours": payload.window_hours if payload.around else None,
+            "hosts": list(payload.hosts),
+        },
         "backend": store.backend_name,
         "total_indexed": len(store.documents),
         "hit_count": len(results),

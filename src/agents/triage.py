@@ -40,6 +40,7 @@ from src.observability import metrics
 from src.prompts import TRIAGE as _TRIAGE
 from src.prompts import with_preamble
 from src.security.audit import AuditEvent
+from src.security.sanitizer import assess_analysability
 from src.state import SecurityAlert, TriageResult
 
 TRIAGE_SYSTEM_PROMPT = with_preamble(_TRIAGE)
@@ -95,6 +96,57 @@ def _coerce_technique_ids(candidates: list[str]) -> tuple[str, ...]:
     return tuple(seen[:6])
 
 
+def _verify_claimed_authorisation(
+    alert: SecurityAlert, context: AgentContext
+) -> tuple[dict[str, Any] | None, list[AuditEvent]]:
+    """Check any change reference the alert cites against trusted records.
+
+    Returns the verified record, or ``None`` when nothing was substantiated --
+    which is also the answer when the alert cited nothing, cited a reference
+    that does not exist, or cited one that does not cover this asset and time.
+    """
+    from src.tools.authorisation import extract_claimed_references
+
+    events: list[AuditEvent] = []
+    text = f"{alert.title}\n{alert.description}"
+    # ``None`` asks for standing approvals registered against the asset, which
+    # is how recurring activity (a nightly backup, a health-check poller) is
+    # authorised without a per-occurrence ticket.
+    references: list[str | None] = list(extract_claimed_references(text)[:3]) or [None]
+
+    attempts = 0
+    for reference in references:
+        for asset in [a.name for a in alert.assets][:3]:
+            # Bounded: verification is a lookup, not a search. Six probes is
+            # more than any real alert needs and keeps the triage budget for
+            # the work that follows.
+            if attempts >= 6:
+                return None, events
+            attempts += 1
+            result = context.call_tool(
+                "verify_authorisation",
+                claimed_reference=reference,
+                asset=asset,
+                occurred_at=alert.detected_at.isoformat(),
+            )
+            events.extend(result.audit_events)
+            if result.ok and result.data.get("verified"):
+                events.append(
+                    context.log(
+                        AuditAction.TOOL_RESULT,
+                        f"authorisation verified for {asset} against {result.data.get('claimed_reference') or 'a standing approval'}",
+                        {
+                            "asset": asset,
+                            "reference": result.data.get("claimed_reference"),
+                            "approver": result.data.get("approver"),
+                            "change_type": result.data.get("change_type"),
+                        },
+                    )
+                )
+                return dict(result.data), events
+    return None, events
+
+
 def run_triage(alert: SecurityAlert, context: AgentContext) -> tuple[TriageResult, list[AuditEvent]]:
     """Produce a :class:`TriageResult` for ``alert``."""
     events: list[AuditEvent] = []
@@ -115,6 +167,52 @@ def run_triage(alert: SecurityAlert, context: AgentContext) -> tuple[TriageResul
     baseline_category = AlertCategory(baseline.get("category", AlertCategory.UNKNOWN.value))
     baseline_confidence = float(baseline.get("confidence", 0.3))
 
+    # --- 1b. Verify any authorisation the alert claims --------------------
+    # Checking the change calendar is a triage-time question -- "is this
+    # expected activity?" -- and it is the difference between an approved
+    # vulnerability scan and reconnaissance, which are otherwise the same
+    # behaviour.
+    #
+    # The claim is extracted from attacker-influenceable alert text and is
+    # worth nothing on its own; only a matching approved record covering this
+    # asset at this time changes the verdict. That distinction is the whole
+    # control: accepting the *claim* was measured against this corpus and would
+    # have suppressed four attack cases, INJ-002 among them.
+    authorisation, auth_events = _verify_claimed_authorisation(alert, context)
+    events.extend(auth_events)
+
+    explained_by_change = bool(
+        authorisation
+        and baseline_category.value in authorisation.get("explains_categories", [])
+    )
+    if authorisation and not explained_by_change:
+        # Verified, but for different activity than the one detected. Recorded
+        # rather than applied: this is the ransomware-during-a-patch-window
+        # case, and silently inheriting the approval is how it would be missed.
+        events.append(
+            context.log(
+                AuditAction.TOOL_RESULT,
+                "authorisation verified but does not explain the observed behaviour",
+                {
+                    "observed_category": baseline_category.value,
+                    "change_explains": authorisation.get("explains_categories", []),
+                    "reference": authorisation.get("claimed_reference"),
+                },
+                success=False,
+            )
+        )
+
+    # Severity is floored at LOW rather than INFO: the activity is expected,
+    # but a verified change explains the *activity*, not everything happening
+    # on the host, and INFO is the level at which things stop being read.
+    def _apply_authorisation(
+        severity: Severity, category: AlertCategory
+    ) -> tuple[Severity, AlertCategory]:
+        if not explained_by_change:
+            return severity, category
+        floored = severity if severity.rank <= Severity.LOW.rank else Severity.LOW
+        return floored, AlertCategory.BENIGN_OR_FALSE_POSITIVE
+
     # --- 2. Contain the alert text and record what it contained -----------
     # The flags travel onto the TriageResult and from there into the policy
     # engine.  This is the only path by which injection carried in the *alert*
@@ -122,6 +220,19 @@ def run_triage(alert: SecurityAlert, context: AgentContext) -> tuple[TriageResul
     # not depend on enrichment running, since a benign verdict skips it.
     contained_alert = contain_alert(alert)
     alert_flags = contained_alert.injection_flags
+    # Assessed on the raw text: NFKC folding is what makes fullwidth and
+    # homoglyph tricks detectable by the patterns, and it is also what would
+    # erase the evidence that the text was mixed-script to begin with.
+    analysis_limits = assess_analysability(f"{alert.title}\n{alert.description}")
+    if analysis_limits:
+        events.append(
+            context.log(
+                AuditAction.UNTRUSTED_CONTENT_FLAGGED,
+                "injection heuristics could not assess this alert's content",
+                {"source": f"alert:{alert.alert_id}", "limits": list(analysis_limits)},
+                success=False,
+            )
+        )
     if alert_flags:
         metrics.injection_detected(source="alert")
         events.append(
@@ -185,9 +296,12 @@ def run_triage(alert: SecurityAlert, context: AgentContext) -> tuple[TriageResul
             )
             severity = baseline_severity
 
+        # A verified change record outranks the model: it is a fact from a
+        # trusted system, not an inference from attacker-influenceable text.
+        severity, llm_category = _apply_authorisation(severity, llm.category)
         result = TriageResult(
             severity=severity,
-            category=llm.category,
+            category=llm_category,
             confidence=round(min(llm.confidence, 0.95), 2),
             rationale=(llm.rationale + adjustment_note)[:4000],
             key_observations=tuple(str(o)[:400] for o in llm.key_observations[:8]),
@@ -197,13 +311,17 @@ def run_triage(alert: SecurityAlert, context: AgentContext) -> tuple[TriageResul
             recommended_next_step=llm.recommended_next_step[:400],
             untrusted_content_flagged=bool(alert_flags),
             injection_flags=alert_flags,
+            analysis_limits=analysis_limits,
             used_llm=True,
         )
     else:
         # --- Deterministic fallback ---------------------------------------
+        effective_severity, effective_category = _apply_authorisation(
+            baseline_severity, baseline_category
+        )
         result = TriageResult(
-            severity=baseline_severity,
-            category=baseline_category,
+            severity=effective_severity,
+            category=effective_category,
             # Cap confidence: a rule-based-only verdict is less trustworthy,
             # and the lower value biases the run toward human review.
             confidence=round(min(baseline_confidence, 0.6), 2),
@@ -217,6 +335,7 @@ def run_triage(alert: SecurityAlert, context: AgentContext) -> tuple[TriageResul
             recommended_next_step="Enrich indicators and correlate against historical logs.",
             untrusted_content_flagged=bool(alert_flags),
             injection_flags=alert_flags,
+            analysis_limits=analysis_limits,
             used_llm=False,
         )
 

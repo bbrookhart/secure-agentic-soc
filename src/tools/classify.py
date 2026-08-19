@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from src.enums import ActionRisk, AlertCategory, Severity
 from src.tools.base import SOCTool
+from src.tools.matching import score_terms
 
 # Weighted signal keywords per category.  Weight reflects how strongly the term
 # implies that category, not how bad it is.
@@ -86,30 +87,18 @@ _SEVERITY_SIGNALS: dict[str, float] = {
     "privilege escalation": 3.0, "lateral movement": 3.0,
 }
 
-# Terms that lower severity -- evidence of containment or benign explanation.
+# Terms that lower severity -- evidence the attack was *contained*.
+#
+# Deliberately not a benign-verdict signal: "blocked" means it was stopped, not
+# that it was permitted. Whether activity was *authorised* is a separate
+# question answered by verify_authorisation against change records, because an
+# authorisation claim read out of alert text is something an attacker can write.
 _MITIGATING_SIGNALS: dict[str, float] = {
     "blocked": 3.0, "quarantined": 3.0, "denied": 2.5, "prevented": 3.0,
     "false positive": 5.0, "known vpn": 4.0, "corporate vpn": 4.0,
     "approved change": 4.0, "sanctioned": 3.0, "change window": 3.0,
     "no execution": 3.0, "mfa satisfied": 2.0, "managed device": 1.5,
 }
-
-# Category -> candidate ATT&CK techniques for the hunter to verify.
-_CATEGORY_TECHNIQUES: dict[AlertCategory, tuple[str, ...]] = {
-    AlertCategory.MALWARE: ("T1486", "T1490", "T1059.001"),
-    AlertCategory.PHISHING: ("T1566", "T1566.002", "T1078"),
-    AlertCategory.CREDENTIAL_ACCESS: ("T1110", "T1110.003", "T1003.001"),
-    AlertCategory.LATERAL_MOVEMENT: ("T1021.001", "T1021.002", "T1078"),
-    AlertCategory.DATA_EXFILTRATION: ("T1041", "T1567.002"),
-    AlertCategory.COMMAND_AND_CONTROL: ("T1071.001", "T1071.004", "T1105"),
-    AlertCategory.PRIVILEGE_ESCALATION: ("T1078", "T1098"),
-    AlertCategory.PERSISTENCE: ("T1547.001", "T1053.005", "T1136.001"),
-    AlertCategory.RECONNAISSANCE: ("T1018", "T1087"),
-    AlertCategory.POLICY_VIOLATION: (),
-    AlertCategory.BENIGN_OR_FALSE_POSITIVE: (),
-    AlertCategory.UNKNOWN: (),
-}
-
 
 class ClassifyAlertInput(BaseModel):
     """Input schema for ``classify_alert``."""
@@ -133,13 +122,8 @@ class ClassifyAlertInput(BaseModel):
 
 
 def _score(text: str, signals: dict[str, float]) -> tuple[float, list[str]]:
-    total = 0.0
-    matched: list[str] = []
-    for term, weight in signals.items():
-        if term in text:
-            total += weight
-            matched.append(term)
-    return total, matched
+    """Weighted keyword score. See ``tools.matching`` for the matching rule."""
+    return score_terms(text, signals)
 
 
 def classify_alert(payload: ClassifyAlertInput) -> dict[str, Any]:
@@ -212,7 +196,6 @@ def classify_alert(payload: ClassifyAlertInput) -> dict[str, Any]:
             f"points, giving '{severity.value}'."
         ),
         "key_observations": observations,
-        "suggested_techniques": list(_CATEGORY_TECHNIQUES.get(best_category, ())),
         "scores": {
             "category_scores": {c.value: round(s, 2) for c, s in sorted(
                 category_scores.items(), key=lambda kv: kv[1], reverse=True

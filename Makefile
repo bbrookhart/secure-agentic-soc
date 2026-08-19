@@ -43,6 +43,20 @@ eval:  ## Score the pipeline against the labelled corpus (deterministic)
 eval-llm:  ## Same corpus, with the configured model
 	$(PYTHON) -m evals.runner --llm
 
+generate:  ## Regenerate the multi-host investigation scenarios
+	$(PYTHON) -m evals.generate
+
+baseline:  ## Re-record the offline baseline (per-case, so paired comparison works)
+	$(PYTHON) -m evals.runner --json evals/baselines/offline.json
+
+baseline-llm:  ## Record an LLM baseline: make baseline-llm NAME=qwen3-8b
+	@test -n "$(NAME)" || { echo "usage: make baseline-llm NAME=<model-slug>"; exit 2; }
+	$(PYTHON) -m evals.runner --llm --json evals/baselines/llm-$(NAME).json
+
+eval-paired:  ## Is B actually better than A?  make eval-paired A=<report> B=<report>
+	@test -n "$(A)" -a -n "$(B)" || { echo "usage: make eval-paired A=<report.json> B=<report.json>"; exit 2; }
+	$(PYTHON) -m evals.paired $(A) $(B)
+
 compare:  ## Supervisor vs. the single ReAct agent on the same corpus (needs Ollama)
 	$(PYTHON) -m evals.compare
 

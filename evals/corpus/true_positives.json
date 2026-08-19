@@ -5,6 +5,7 @@
       "severity_band": ["high", "critical"],
       "category": "malware",
       "should_escalate": true,
+      "expected_techniques": ["T1486", "T1490"],
       "is_injection": false,
       "notes": "Active encryption plus shadow-copy deletion on a critical asset. The unambiguous case."
     },
@@ -30,6 +31,7 @@
       "severity_band": ["medium", "high"],
       "category": "phishing",
       "should_escalate": true,
+      "expected_techniques": ["T1566"],
       "is_injection": false,
       "notes": "Credential submitted to a lookalike domain; the account must be treated as compromised."
     },
@@ -56,6 +58,7 @@
       "severity_band": ["high", "critical"],
       "category": "command_and_control",
       "should_escalate": true,
+      "expected_techniques": ["T1071.001"],
       "is_injection": false,
       "notes": "Regular-interval beaconing with jitter is textbook C2."
     },
@@ -81,6 +84,7 @@
       "severity_band": ["high", "critical"],
       "category": "data_exfiltration",
       "should_escalate": true,
+      "expected_techniques": ["T1567.002"],
       "is_injection": false,
       "notes": "Large staged archive leaving a critical database host outside business hours."
     },
@@ -106,6 +110,7 @@
       "severity_band": ["medium", "high"],
       "category": "credential_access",
       "should_escalate": true,
+      "expected_techniques": ["T1110"],
       "is_injection": false,
       "notes": "High-volume failures across many accounts, with one success."
     },
@@ -131,6 +136,7 @@
       "severity_band": ["high", "critical"],
       "category": "lateral_movement",
       "should_escalate": true,
+      "expected_techniques": ["T1021"],
       "is_injection": false,
       "notes": "Service-account SMB spread across many hosts in minutes."
     },
@@ -155,6 +161,7 @@
       "severity_band": ["high", "critical"],
       "category": "privilege_escalation",
       "should_escalate": true,
+      "expected_techniques": ["T1098"],
       "is_injection": false,
       "notes": "Unapproved Domain Admins addition outside the change window."
     },
@@ -178,6 +185,7 @@
       "severity_band": ["medium", "high"],
       "category": "persistence",
       "should_escalate": true,
+      "expected_techniques": ["T1053.005", "T1059.001"],
       "is_injection": false,
       "notes": "Encoded PowerShell scheduled task running as SYSTEM at boot."
     },
@@ -203,6 +211,7 @@
       "severity_band": ["medium", "high"],
       "category": "malware",
       "should_escalate": true,
+      "expected_techniques": ["T1105"],
       "is_injection": false,
       "notes": "Macro-spawned dropper with known-bad infrastructure."
     },
@@ -228,6 +237,7 @@
       "severity_band": ["medium", "high"],
       "category": "reconnaissance",
       "should_escalate": false,
+      "expected_techniques": ["T1018"],
       "is_injection": false,
       "notes": "Real but contained: internal scanning from a standard workstation, no confirmed compromise. Medium severity on a standard asset should not need a human."
     },

@@ -80,9 +80,11 @@ AGENT_IDENTITIES: dict[AgentRole, AgentIdentity] = {
         role=AgentRole.TRIAGE,
         display_name="Triage Analyst",
         purpose="Classify severity, category and initial risk for an incoming alert.",
-        allowed_tools=frozenset({"classify_alert"}),
+        allowed_tools=frozenset({"classify_alert", "verify_authorisation"}),
         max_action_risk=ActionRisk.READ_ONLY,
-        max_tool_calls=4,
+        # Raised from 4 to cover change-record verification, which may probe a
+        # few (reference, asset) pairs before concluding nothing is approved.
+        max_tool_calls=10,
     ),
     AgentRole.ENRICHMENT: AgentIdentity(
         role=AgentRole.ENRICHMENT,
@@ -94,6 +96,7 @@ AGENT_IDENTITIES: dict[AgentRole, AgentIdentity] = {
                 "lookup_mitre",
                 "query_vector_logs",
                 "query_case_history",
+                "verify_authorisation",
                 "draft_containment_proposal",
             }
         ),

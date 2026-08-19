@@ -105,6 +105,7 @@ def run_reporter(
     context: AgentContext,
     *,
     case_context: dict[str, int | str] | None = None,
+    investigation_chain: tuple[str, ...] = (),
 ) -> tuple[IncidentReport, list[AuditEvent]]:
     """Produce the final :class:`IncidentReport`."""
     events: list[AuditEvent] = []
@@ -219,15 +220,43 @@ def run_reporter(
     # --- Facts the model does not get to change ---------------------------
     # Copied straight from validated state so the narrative cannot contradict
     # the structured record.
-    if enrichment and enrichment.untrusted_content_flagged:
+    # Both layers, because they see different things. Enrichment sees payloads
+    # in retrieved evidence; triage sees payloads in the alert's own text, and
+    # a run that ends at a benign verdict never enriches at all. Reporting only
+    # the enrichment flag meant alert-borne injection -- the most common kind --
+    # could be contained correctly and then go unmentioned in the report.
+    injection_flags = tuple(
+        dict.fromkeys(
+            (triage.injection_flags if triage and triage.untrusted_content_flagged else ())
+            + (enrichment.injection_flags if enrichment and enrichment.untrusted_content_flagged else ())
+        )
+    )
+    analysis_limits = triage.analysis_limits if triage else ()
+
+    if injection_flags:
         finding = (
-            "Attempted prompt injection was detected in content gathered during this "
-            f"investigation (heuristics matched: {', '.join(enrichment.injection_flags)}). "
+            "Attempted prompt injection was detected in content associated with this "
+            f"investigation (heuristics matched: {', '.join(injection_flags)}). "
             "The injected instructions were contained and not acted upon, but their presence "
             "is itself an adversary technique worth investigating."
         )
         if not any("injection" in f.lower() for f in key_findings):
             key_findings.insert(0, finding)
+    elif analysis_limits:
+        # Not a detection. The opposite: a statement that no detection was
+        # possible, which an analyst needs to see precisely because it looks
+        # like a clean result everywhere else.
+        finding = (
+            "Prompt-injection heuristics could not assess this alert's content "
+            f"({', '.join(analysis_limits)}), so it has NOT been cleared -- it has "
+            "gone unexamined. Manual review of the original text is required."
+        )
+        if not any("injection" in f.lower() for f in key_findings):
+            key_findings.insert(0, finding)
+        caveats.append(
+            "The injection heuristics are English and Latin-script; this alert falls "
+            "outside what they can evaluate."
+        )
         caveats.append(
             "Evidence for this incident included attacker-controlled text attempting to "
             "manipulate the analysis pipeline; conclusions drawn from that content should be "
@@ -280,8 +309,19 @@ def run_reporter(
             "assessments are rule-based."
         )
 
+    if investigation_chain:
+        # Stated as a finding, not just metadata: a report citing a host the
+        # alert never named is confusing unless it also says how the
+        # investigation got there.
+        key_findings.append(
+            "Investigation followed evidence beyond the original alert: "
+            + "; ".join(investigation_chain)
+            + "."
+        )
+
     report = IncidentReport(
         title=title,
+        investigation_chain=investigation_chain,
         executive_summary=summary,
         verdict=verdict,
         severity=triage.severity,

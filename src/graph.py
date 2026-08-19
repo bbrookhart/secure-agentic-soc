@@ -41,6 +41,7 @@ from langgraph.types import interrupt
 
 from src.agents.base import AgentContext
 from src.agents.enrichment import run_enrichment
+from src.agents.frontier import next_frontier
 from src.agents.reporter import run_reporter
 from src.agents.supervisor import Route, run_supervisor
 from src.agents.triage import run_triage
@@ -55,6 +56,7 @@ from src.state import (
     InvalidStateTransition,
     Phase,
     SOCState,
+    merge_enrichment,
     validate_transition,
 )
 from src.tools import ToolBroker, build_broker
@@ -223,9 +225,26 @@ def build_graph(
             }
 
         context = _context(state, AgentRole.ENRICHMENT)
-        results, events = run_enrichment(state.alert, state.triage_result, context)
+        # Rounds after the first follow the frontier: entities earlier evidence
+        # surfaced that nothing has investigated yet.
+        scope = next_frontier(state) if state.enrichment_results is not None else ()
+        results, events = run_enrichment(state.alert, state.triage_result, context, scope)
+
+        # Accumulate rather than replace. merge_enrichment ORs the injection
+        # flag, so a hostile line found in round one keeps forcing HITL-005
+        # even if later rounds come back clean.
+        merged = merge_enrichment(state.enrichment_results, results)
+        covered = tuple(
+            dict.fromkeys(state.investigated_entities + tuple(e.lower() for e in scope))
+        )
+        chain = state.investigation_chain + (
+            (f"round {state.investigation_rounds + 1}: {', '.join(scope)}",) if scope else ()
+        )
         return {
-            "enrichment_results": results,
+            "enrichment_results": merged,
+            "investigation_rounds": state.investigation_rounds + 1,
+            "investigated_entities": covered,
+            "investigation_chain": chain,
             "audit_log": events,
             "completed_agents": ["enrichment"],
             "phase": Phase.ENRICHED,
@@ -466,6 +485,7 @@ def build_graph(
                 "related_false_positives": state.related_false_positives,
                 "case_id": state.case_id,
             },
+            investigation_chain=state.investigation_chain,
         )
         return {
             "final_report": report,

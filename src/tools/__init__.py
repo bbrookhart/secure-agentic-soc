@@ -14,6 +14,7 @@ code-execution tool.  That absence is the design.
 
 from __future__ import annotations
 
+from src.tools.authorisation import VERIFY_AUTHORISATION_TOOL
 from src.tools.base import SOCTool, ToolBroker, ToolResult
 from src.tools.case_history import QUERY_CASE_HISTORY_TOOL
 from src.tools.classify import CLASSIFY_ALERT_TOOL
@@ -32,6 +33,7 @@ TOOL_REGISTRY: dict[str, SOCTool] = {
         QUERY_VECTOR_LOGS_TOOL,
         QUERY_CASE_HISTORY_TOOL,
         DRAFT_CONTAINMENT_TOOL,
+        VERIFY_AUTHORISATION_TOOL,
     )
 }
 
@@ -52,6 +54,7 @@ __all__ = [
     "LOOKUP_MITRE_TOOL",
     "QUERY_CASE_HISTORY_TOOL",
     "QUERY_VECTOR_LOGS_TOOL",
+    "VERIFY_AUTHORISATION_TOOL",
     "TOOL_REGISTRY",
     "SOCTool",
     "ToolBroker",

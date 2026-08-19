@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -31,6 +32,19 @@ from src.enums import AlertCategory, Severity
 from src.state import SecurityAlert
 
 CORPUS_DIR = Path(__file__).resolve().parent / "corpus"
+
+
+#: Where an injection payload enters the system. The distinction is the whole
+#: point of the trust-boundary design, and scoring it in aggregate hides the
+#: only interesting question: which boundary was actually tested?
+#:
+#: ``alert`` is text a reporter submitted -- attacker-influenced, but it arrives
+#: through the front door and triage sees it directly. The rest arrive in *tool
+#: output*, after the pipeline decided to go looking: a poisoned intel note, a
+#: tampered ATT&CK description, a hostile log line, a prior case summary. Those
+#: are the channels an attacker can reach without filing a ticket, and they are
+#: read by an agent that has already accepted the surrounding evidence as real.
+InjectionChannel = Literal["alert", "intel", "mitre", "logs", "case_history"]
 
 
 class Expectation(BaseModel):
@@ -44,6 +58,25 @@ class Expectation(BaseModel):
     is_injection: bool = False
     #: Only meaningful for injection cases: should the pattern detector fire?
     heuristics_expected: bool = True
+    #: Which trust boundary the payload crosses. Defaults to ``alert`` because
+    #: every case written before this label existed injects through alert text.
+    injection_channel: InjectionChannel = "alert"
+    #: ATT&CK technique IDs a competent analyst would cite for this alert.
+    #:
+    #: ``None`` means *unlabelled* and the case is skipped by technique scoring;
+    #: an empty tuple is a real label meaning **nothing should be mapped**, which
+    #: is the assertion that matters for benign alerts. The distinction is the
+    #: point: without it, "no expectation" and "expect nothing" collapse into
+    #: each other and the spurious-mapping rate becomes unmeasurable.
+    expected_techniques: tuple[str, ...] | None = None
+    #: Entities beyond the alert's own that the investigation should reach.
+    #:
+    #: Same convention as ``expected_techniques``: ``None`` is unlabelled and
+    #: skipped, while an empty tuple is a real assertion that evidence is
+    #: confined to the alert's own host and the run must *not* pivot. Both
+    #: halves are needed -- a loop that always pivots would score perfectly on
+    #: recall alone, so the control cases are what make the metric honest.
+    expected_entities: tuple[str, ...] | None = None
     notes: str = ""
 
 

@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from src.agents.base import AgentContext
 from src.agents.coercion import enum_coercer
+from src.agents.frontier import next_frontier
 from src.enums import (
     AgentRole,
     AlertCategory,
@@ -46,7 +47,19 @@ from src.security.policy import ApprovalPolicy, PolicyDecision, PolicyInput
 from src.state import Phase, SOCState
 
 #: Hard ceiling on supervisor turns, so a routing bug cannot loop forever.
-MAX_SUPERVISOR_TURNS = 12
+# Raised from 12 to accommodate multi-round investigations: each extra round
+# costs two supervisor turns (out to enrichment, back again), and a run that
+# hits this limit halts rather than finishing, so the round cap below must be
+# what stops an investigation -- never this.
+MAX_SUPERVISOR_TURNS = 20
+
+#: How many evidence-gathering rounds one run may take. Three is enough to
+#: follow a lead two hops from the original alert, which covers the realistic
+#: "alert names A, A talks to B, B is the actual problem" shape.
+MAX_INVESTIGATION_ROUNDS = 3
+
+#: Tool calls that must remain before another round is worth starting.
+MIN_ROUND_TOOL_HEADROOM = 8
 
 
 class Route(str, Enum):
@@ -103,6 +116,8 @@ def build_policy_input(state: SOCState, *, max_tool_calls: int) -> PolicyInput:
     return PolicyInput(
         severity=triage.severity if triage else state.alert.reported_severity,
         confidence=triage.confidence if triage else 1.0,
+        category_is_unknown=bool(triage and triage.category is AlertCategory.UNKNOWN),
+        content_not_analysable=bool(triage and triage.analysis_limits),
         asset_is_critical=state.alert.has_critical_asset,
         proposed_action_risks=tuple(a.risk for a in enrichment.proposed_actions) if enrichment else (),
         tool_calls_used=state.tool_calls_used,
@@ -113,8 +128,19 @@ def build_policy_input(state: SOCState, *, max_tool_calls: int) -> PolicyInput:
     )
 
 
-def deterministic_route(state: SOCState, policy_decision: PolicyDecision) -> RouteDecision:
-    """The authoritative router. Ordered rules over validated state."""
+def deterministic_route(
+    state: SOCState,
+    policy_decision: PolicyDecision,
+    *,
+    max_tool_calls: int = 40,
+) -> RouteDecision:
+    """The authoritative router. Ordered rules over validated state.
+
+    ``max_tool_calls`` comes from the broker that actually enforces the budget,
+    so the "is another investigation round affordable" check in R-023 is made
+    against the real ceiling rather than a guess. It defaults to the broker's
+    own default for callers that only exercise routing.
+    """
     # --- Terminal states --------------------------------------------------
     if state.phase is Phase.COMPLETE:
         return RouteDecision(route=Route.FINISH, rule_id="R-000", reason="Run already complete.")
@@ -159,7 +185,7 @@ def deterministic_route(state: SOCState, policy_decision: PolicyDecision) -> Rou
 
     # --- Enrichment -------------------------------------------------------
     if state.enrichment_results is None:
-        # Skip enrichment only for confidently benign, non-severe alerts. The
+        # First pass. Skip enrichment only for confidently benign, non-severe alerts. The
         # confidence floor matters: a low-confidence "benign" is exactly the
         # case where skipping investigation would be a mistake.
         confidently_benign = (
@@ -209,6 +235,29 @@ def deterministic_route(state: SOCState, policy_decision: PolicyDecision) -> Rou
             )
 
     # --- Reporting --------------------------------------------------------
+    # --- Keep investigating while evidence points somewhere new -----------
+    # Deliberately below the approval gate: a run that owes a human must stop
+    # and ask, not keep pivoting. Above it, an investigation that kept finding
+    # new hosts would postpone the gate indefinitely -- which is exactly what
+    # an attacker seeding evidence with fresh hostnames would want.
+    if state.enrichment_results is not None and state.final_report is None:
+        frontier = next_frontier(state)
+        rounds_left = state.investigation_rounds < MAX_INVESTIGATION_ROUNDS
+        # Leave headroom rather than running to exhaustion: a round that dies
+        # mid-way through its tool budget produces partial evidence, which is
+        # worse than not starting it.
+        budget_left = (max_tool_calls - state.tool_calls_used) >= MIN_ROUND_TOOL_HEADROOM
+        if frontier and rounds_left and budget_left:
+            return RouteDecision(
+                route=Route.ENRICHMENT,
+                rule_id="R-023",
+                reason=(
+                    f"Evidence surfaced {len(frontier)} entity(ies) nothing has "
+                    f"investigated yet ({', '.join(frontier)}); round "
+                    f"{state.investigation_rounds + 1} of {MAX_INVESTIGATION_ROUNDS}."
+                ),
+            )
+
     if state.final_report is None:
         return RouteDecision(
             route=Route.REPORTER,
@@ -297,7 +346,9 @@ def run_supervisor(
     )
 
     # --- 2. Authoritative routing ----------------------------------------
-    decision = deterministic_route(state, policy_decision)
+    decision = deterministic_route(
+        state, policy_decision, max_tool_calls=context.broker.max_calls_per_run
+    )
 
     # --- 3. Advisory LLM opinion -----------------------------------------
     if consult_llm:

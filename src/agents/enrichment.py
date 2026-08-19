@@ -22,12 +22,13 @@ attacker would most like to influence.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from src.agents.base import AgentContext, render_alert_for_prompt
-from src.enums import ActionRisk, AgentRole, AlertCategory, AuditAction, Severity
+from src.enums import ActionRisk, AgentRole, AlertCategory, AuditAction, IndicatorType, Severity
 from src.llm import structured_completion
 from src.prompts import ENRICHMENT as _ENRICHMENT
 from src.prompts import with_preamble
@@ -66,16 +67,26 @@ class EnrichmentLLMOutput(BaseModel):
 
 
 # --- Evidence gathering -----------------------------------------------------
-def _log_queries(alert: SecurityAlert, triage: TriageResult) -> list[str]:
+def _log_queries(
+    alert: SecurityAlert, triage: TriageResult, scope: tuple[str, ...] = ()
+) -> list[str]:
     """Build a small, targeted set of log queries from alert and triage output.
 
     Capped deliberately: an unbounded query fan-out is both a cost problem and
     a way for a confused agent to burn its budget without adding signal.
-    """
-    queries: list[str] = [f"{alert.title} {' '.join(a.name for a in alert.assets)}".strip()]
 
-    for indicator in alert.indicators[:3]:
-        queries.append(f"{indicator.value} {indicator.context or ''}".strip())
+    With a ``scope``, the queries are built around those entities instead of the
+    alert's own -- this is a later investigation round following a lead the
+    first round turned up. The category hint is kept either way, because the
+    kind of incident under investigation does not change when the host does.
+    """
+    if scope:
+        queries = [entity for entity in scope]
+    else:
+        queries = [f"{alert.title} {' '.join(a.name for a in alert.assets)}".strip()]
+
+        for indicator in alert.indicators[:3]:
+            queries.append(f"{indicator.value} {indicator.context or ''}".strip())
 
     category_hints: dict[AlertCategory, str] = {
         AlertCategory.MALWARE: "process execution payload download persistence registry",
@@ -100,18 +111,53 @@ def _log_queries(alert: SecurityAlert, triage: TriageResult) -> list[str]:
     return seen[:5]
 
 
+def _as_indicator(value: str) -> tuple[str, str]:
+    """Classify a frontier entity as an enrichable indicator, or reject it.
+
+    The frontier deliberately mixes hostnames and indicators, because both are
+    worth pivoting to. Only the latter can be enriched, and ``enrich_ioc``
+    validates its ``indicator_type`` strictly, so guessing wrong costs a
+    rejected call. Anything unrecognised comes back with an empty type and is
+    dropped by the caller rather than sent.
+    """
+    import ipaddress
+
+    candidate = str(value).strip()
+    try:
+        parsed = ipaddress.ip_address(candidate)
+    except ValueError:
+        pass
+    else:
+        return candidate, "ipv4" if parsed.version == 4 else "ipv6"
+
+    if "@" in candidate and "." in candidate.split("@")[-1]:
+        return candidate, "email"
+    if re.fullmatch(r"[a-fA-F0-9]{32}|[a-fA-F0-9]{40}|[a-fA-F0-9]{64}", candidate):
+        return candidate, "hash"
+    return candidate, ""
+
+
 def _gather_ioc_enrichments(
-    alert: SecurityAlert, context: AgentContext
+    alert: SecurityAlert, context: AgentContext, scope: tuple[str, ...] = ()
 ) -> tuple[list[IOCEnrichment], list[AuditEvent], set[str]]:
     enrichments: list[IOCEnrichment] = []
     events: list[AuditEvent] = []
     flags: set[str] = set()
 
-    for indicator in alert.indicators[:10]:
+    targets: list[tuple[str, str]] = [
+        (i.value, i.indicator_type.value) for i in alert.indicators[:10]
+    ]
+    if scope:
+        # A pivot round enriches what the previous round surfaced. Only
+        # entities that parse as a known indicator type are sent: the frontier
+        # also carries hostnames, and enrich_ioc's schema would reject them.
+        targets = [(value, kind) for value, kind in (_as_indicator(s) for s in scope) if kind]
+
+    for value, kind in targets:
         result = context.call_tool(
             "enrich_ioc",
-            indicator=indicator.value,
-            indicator_type=indicator.indicator_type.value,
+            indicator=value,
+            indicator_type=kind,
         )
         events.extend(result.audit_events)
         flags.update(result.injection_flags)
@@ -122,8 +168,8 @@ def _gather_ioc_enrichments(
         data: dict[str, Any] = result.data
         enrichments.append(
             IOCEnrichment(
-                indicator=str(data.get("indicator", indicator.value)),
-                indicator_type=indicator.indicator_type,
+                indicator=str(data.get("indicator", value)),
+                indicator_type=IndicatorType(kind),
                 known_malicious=bool(data.get("known_malicious", False)),
                 reputation_score=int(data.get("reputation_score", 0)),
                 threat_names=tuple(str(n) for n in data.get("threat_names", [])),
@@ -160,8 +206,20 @@ def _gather_mitre(
     #    an adversary technique is worse than mapping it to nothing, because a
     #    spurious ATT&CK reference in a report reads as confirmed tradecraft.
     if triage.category is not AlertCategory.BENIGN_OR_FALSE_POSITIVE:
-        keyword_query = " ".join([alert.title, triage.category.value.replace("_", " ")])[:400]
-        result = context.call_tool("lookup_mitre", query=keyword_query, limit=4)
+        # Query the *evidence*, not the label. Appending the category made every
+        # technique inherit triage's category error: a benign backup job filed
+        # as data_exfiltration was reliably assigned exfiltration techniques,
+        # because the query said "data exfiltration" regardless of what the
+        # alert described. Matching curated technique keywords against the
+        # alert's own words took clean mappings from 10% to 57% on the corpus.
+        # Two, not four. The limit is a precision control, and the corpus
+        # measures the trade directly: 4 -> 23 spurious techniques, 3 -> 18,
+        # 2 -> 8, 1 -> 4. Dropping to one costs seven real techniques, which is
+        # too much; two costs one. Every technique asserted is a claim about
+        # tradecraft an analyst may act on without re-deriving it, so the
+        # ranked tail is not free to include.
+        keyword_query = " ".join([alert.title, alert.description])[:400]
+        result = context.call_tool("lookup_mitre", query=keyword_query, limit=2)
         events.extend(result.audit_events)
         flags.update(result.injection_flags)
         if result.ok:
@@ -191,25 +249,99 @@ def _to_technique(record: dict[str, Any]) -> MitreTechnique:
 #: travel alert will draw the wrong conclusion.
 MIN_LOG_RELEVANCE = 0.12
 
+#: How far either side of the detection a correlated log line may sit.
+#:
+#: Three days is generous for "what else happened around this", and still
+#: excludes the unrelated-month matches that lexical retrieval was surfacing.
+LOG_WINDOW_HOURS = 72
+
+
+
+def _flags_for(record: dict[str, Any]) -> set[str]:
+    """Injection heuristics matched by one retrieved log record.
+
+    The broker reports flags for a whole tool result, which is the right
+    granularity for the audit trail and the wrong one for deciding whether the
+    *analysis* was exposed: a single result carries several log lines, and only
+    those clearing the relevance floor become evidence.
+
+    Re-running the detector per record recovers that granularity. It runs over
+    text the broker has already sanitised, so the flags are exactly the ones
+    that record contributed to the result-level set -- no new normalisation
+    happens here, and nothing can slip past by being scanned twice.
+    """
+    from src.security.sanitizer import detect_injection
+
+    flags: set[str] = set()
+    for value in record.values():
+        if isinstance(value, str):
+            flags.update(detect_injection(value))
+    return flags
+
 
 def _gather_logs(
-    alert: SecurityAlert, triage: TriageResult, context: AgentContext
+    alert: SecurityAlert,
+    triage: TriageResult,
+    context: AgentContext,
+    scope: tuple[str, ...] = (),
 ) -> tuple[list[LogSearchHit], list[AuditEvent], set[str]]:
     hits: dict[str, LogSearchHit] = {}
     events: list[AuditEvent] = []
     flags: set[str] = set()
 
-    for query in _log_queries(alert, triage):
-        result = context.call_tool("query_vector_logs", query=query, limit=5)
+    # Every query is scoped to a window around the detection. A log line from
+    # a month later cannot explain an alert now, and leaving it eligible let
+    # lexical overlap put unrelated hosts at the top of the results.
+    #
+    # Host scoping is applied only to the first query -- the one built from the
+    # alert's own title and assets. The indicator and category queries stay
+    # host-free on purpose: lateral movement and C2 are precisely the cases
+    # where the interesting line is on a host the alert never named.
+    # Deliberately not host-scoped, on any round.
+    #
+    # Restricting results to the hosts already known hides exactly the evidence
+    # an investigation exists to find: the line naming the second host in a
+    # lateral-movement chain scored 0.35, well clear of the floor, and was
+    # discarded for being on the "wrong" machine. On a pivot round it is worse
+    # still -- scoping to the host just discovered means only that host's own
+    # lines come back, so the chain can never reach a third hop.
+    #
+    # Time scoping and the relevance floor are what suppress unrelated noise,
+    # and they do it without blinding the search: the existing corpus stays
+    # bit-identical with host scoping removed.
+    for query in _log_queries(alert, triage, scope):
+        result = context.call_tool(
+            "query_vector_logs",
+            query=query,
+            limit=5,
+            around=alert.detected_at.isoformat(),
+            window_hours=LOG_WINDOW_HOURS,
+        )
         events.extend(result.audit_events)
-        flags.update(result.injection_flags)
         if not result.ok:
             continue
         for record in result.data.get("hits", []):
             log_id = str(record.get("log_id", ""))
             relevance = float(record.get("relevance", 0.0))
             if relevance < MIN_LOG_RELEVANCE:
+                # Below the floor: discarded, so it never reaches the prompt and
+                # therefore cannot have influenced the analysis. Deliberately
+                # *not* flagged.
+                #
+                # Flagging it would escalate a run on content the pipeline threw
+                # away. That is not hypothetical: retrieval here is lexical and
+                # unscoped by host or time, so one hostile line anywhere in the
+                # corpus scored just under the floor for unrelated alerts and
+                # pushed benign runs through HITL-005. The security property is
+                # unchanged -- hostile content that *is* relevant clears the
+                # floor, enters the prompt, and still forces a human -- while
+                # the false positives it caused are gone.
+                #
+                # The broker has already audited every line it saw, including
+                # this one, so the evidence that hostile content exists in the
+                # corpus is not lost; it simply stops driving policy.
                 continue
+            flags.update(_flags_for(record))
             hit = LogSearchHit(
                 log_id=log_id,
                 timestamp=str(record.get("timestamp", "")),
@@ -329,14 +461,39 @@ def run_enrichment(
     alert: SecurityAlert,
     triage: TriageResult,
     context: AgentContext,
+    scope: tuple[str, ...] = (),
 ) -> tuple[EnrichmentResults, list[AuditEvent]]:
-    """Gather evidence, map to ATT&CK, correlate logs and draft proposals."""
-    events: list[AuditEvent] = []
-    events.append(context.log(AuditAction.AGENT_STARTED, f"enrichment started for {alert.alert_id}"))
+    """Gather evidence, map to ATT&CK, correlate logs and draft proposals.
 
-    enrichments, ioc_events, ioc_flags = _gather_ioc_enrichments(alert, context)
-    techniques, mitre_events, mitre_flags = _gather_mitre(alert, triage, context)
-    log_hits, log_events, log_flags = _gather_logs(alert, triage, context)
+    ``scope`` is the investigation frontier: entities an earlier round surfaced
+    that nothing has looked at yet. When set, evidence gathering is pointed at
+    those instead of at the alert's own entities, which is what makes this a
+    further round of one investigation rather than a repeat of the first.
+    """
+    events: list[AuditEvent] = []
+    events.append(
+        context.log(
+            AuditAction.AGENT_STARTED,
+            f"enrichment started for {alert.alert_id}"
+            + (f" (pivot round, following: {', '.join(scope)})" if scope else ""),
+            # Recorded so the audit trail answers *why the system looked here*,
+            # not merely that it did.
+            {"scope": list(scope)} if scope else None,
+        )
+    )
+
+    enrichments, ioc_events, ioc_flags = _gather_ioc_enrichments(alert, context, scope)
+    # ATT&CK mapping is a property of the incident, not of the host currently
+    # being examined, so it is only done on the first pass.
+    # ATT&CK mapping describes the incident, not whichever host is currently
+    # under the microscope, so later rounds skip it rather than re-deriving the
+    # same techniques against a narrower query.
+    techniques: list[MitreTechnique] = []
+    mitre_events: list[AuditEvent] = []
+    mitre_flags: set[str] = set()
+    if not scope:
+        techniques, mitre_events, mitre_flags = _gather_mitre(alert, triage, context)
+    log_hits, log_events, log_flags = _gather_logs(alert, triage, context, scope)
     proposals, proposal_events = _draft_proposals(alert, triage, enrichments, context)
 
     events.extend(ioc_events + mitre_events + log_events + proposal_events)
