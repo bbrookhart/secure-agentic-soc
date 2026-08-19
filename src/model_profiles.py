@@ -47,6 +47,36 @@ Both quality observations are single samples and neither settles the general
 question. That is what ``evals/paired.py`` is for: record a baseline per model
 and let the corpus answer. ``qwen3:8b`` stays one ``SOC_OLLAMA_MODEL`` away for
 hosts that can hold it.
+
+**Verdict authority is earned, not assumed.**
+
+The same argument, applied to the thing that actually matters. Triage proposes a
+severity and a category, and those drive the approval gate -- so the question of
+whether the *model* or the *rules* should decide them is exactly the kind of
+question the corpus can answer, and it has:
+
+    paired, 38 cases, llama3.2 against the deterministic floor
+
+        category correct      39%  vs  68%   p=0.035
+        severity in band      79%  vs  93%   p=0.039
+        escalation correct    74%  vs  97%   p=0.004
+        missed escalations     4   vs   2    (two of them real attacks)
+
+Every difference is resolved, and every one favours the rules. The model
+under-calls severity to "medium", so ``HITL-001`` never fires and a genuine
+incident completes without a human. So ``verdict_authority`` defaults to
+**False**: the model's proposal is recorded, the disagreement is audited, and
+the classifier's answer stands -- the same shape routing has always had.
+
+To promote a model, measure it rather than trusting it::
+
+    make baseline-llm NAME=<model>
+    make eval-paired A=evals/baselines/offline.json B=evals/baselines/llm-<model>.json
+
+Grant ``SOC_MODEL_VERDICT_AUTHORITY=true`` only if that model *beats* the floor
+on category and severity, and does not add missed escalations. A model that
+merely ties has not earned the authority: the rules are cheaper, reproducible,
+and cannot be talked into anything.
 """
 
 from __future__ import annotations
@@ -65,6 +95,8 @@ class ModelProfile:
     temperature: float
     num_ctx: int
     reasoning: bool
+    #: Whether this role's model may decide the verdict, or merely propose one.
+    verdict_authority: bool
     rationale: str
 
     def as_details(self) -> dict[str, object]:
@@ -74,6 +106,7 @@ class ModelProfile:
             "temperature": self.temperature,
             "num_ctx": self.num_ctx,
             "reasoning": self.reasoning,
+            "verdict_authority": self.verdict_authority,
         }
 
 
@@ -88,8 +121,9 @@ _REASONING_BY_ROLE: dict[AgentRole, tuple[bool, str]] = {
     ),
     AgentRole.TRIAGE: (
         True,
-        "Severity and category drive the approval gate. This is the judgement call most "
-        "worth spending on, and the measured difference was a correct escalation.",
+        "Severity and category drive the approval gate, so the model's proposal is worth "
+        "a reasoning pass -- but it is a proposal: the deterministic classifier decides "
+        "unless a model has been measured to beat it (see verdict_authority).",
     ),
     AgentRole.ENRICHMENT: (
         True,
@@ -130,6 +164,9 @@ def profile_for(role: AgentRole) -> ModelProfile:
         # investigation take minutes on modest hardware, so the per-role
         # defaults only apply once the operator has asked for reasoning at all.
         reasoning=default_reasoning and settings.llm_reasoning,
+        # Only triage holds a verdict to begin with; the other roles produce
+        # narrative or advice, so there is nothing here for them to be granted.
+        verdict_authority=(role is AgentRole.TRIAGE and settings.model_verdict_authority),
         rationale=rationale,
     )
 

@@ -30,12 +30,17 @@ This project inverts that.
 | Whether a human must approve | 🔒 **Deterministic policy engine** | The most security-critical decision in the system — it must not be persuadable |
 | Which tool to call, with what arguments | 🔒 **Agent code** | Bounded, auditable, testable |
 | Whether a principal *may* call that tool | 🔒 **Broker + identity registry** | Least privilege enforced in code, not prose |
-| Severity, category, narrative, correlation | 🤖 LLM | Genuine judgement work, where a model adds real value |
+| Severity and category — *the verdict* | 🔒 **Rule-based classifier** | Measured, not assumed: paired against the floor, llama3.2 scored 39% category to the classifier's 68% and missed four escalations to its two. A model that beats the floor can be promoted via `SOC_MODEL_VERDICT_AUTHORITY` |
+| Analysis, narrative, correlation, pivots | 🤖 LLM | Genuine judgement work, where a model adds real value |
 
-The LLM *is* consulted about routing — its answer is recorded and compared with the router's.
-When they disagree, the disagreement is logged as an **override**. This gives an auditor
-something concrete: a record of every time the model wanted to do something other than what
-policy dictated.
+The LLM *is* consulted about routing and about the verdict — its answers are recorded and
+compared with the deterministic component's. When they disagree, the disagreement is logged
+as an **override**. This gives an auditor something concrete: a record of every time the
+model wanted to do something other than what policy dictated, and every time it would have
+called an incident differently.
+
+Verdict authority is a capability a model earns rather than one the architecture grants.
+See `src/model_profiles.py` for the promotion procedure.
 
 ---
 

@@ -54,6 +54,23 @@ class Expectation(BaseModel):
 
     severity_band: tuple[Severity, ...] = Field(min_length=1)
     category: AlertCategory
+    #: Categories a competent analyst could also defend for this alert.
+    #:
+    #: The same argument the severity band rests on, applied to the axis that
+    #: needed it just as much. A service-desk ticket whose only content is a
+    #: manipulation attempt is genuinely both "unknown" (nothing was
+    #: determined) and "benign_or_false_positive" (as an *alert* there is
+    #: nothing here) -- and the classifier itself splits between the two across
+    #: near-identical cases.
+    #:
+    #: Scoring one of those as an error measures conformity, not correctness.
+    #: The alternative -- relabelling to whatever the system currently says --
+    #: was checked and rejected: it would have fixed seven cases and broken
+    #: three, by moving ground truth toward the majority output.
+    #:
+    #: Strict accuracy (primary only) is reported alongside, so the harder
+    #: number stays visible exactly as it does for severity.
+    category_also_acceptable: tuple[AlertCategory, ...] = ()
     should_escalate: bool
     is_injection: bool = False
     #: Only meaningful for injection cases: should the pattern detector fire?

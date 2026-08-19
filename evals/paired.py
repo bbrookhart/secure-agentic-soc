@@ -55,7 +55,15 @@ def _case_correctness(case: dict[str, Any]) -> dict[str, bool]:
     severity = case.get("severity")
 
     severity_in_band = severity is not None and severity in band
-    category_correct = case.get("category", "") == expected.get("category")
+
+    # Categories a competent analyst could also defend, mirroring the severity
+    # band. This must match how ``runner.summarise`` scores, or the per-case
+    # verdict and the headline proportion answer different questions -- which
+    # they briefly did, printing "66% -> 83%" beside "identical on all 41
+    # cases". Older reports have no such field and simply get an empty set.
+    acceptable = {expected.get("category")}
+    acceptable |= set(expected.get("category_also_acceptable") or ())
+    category_correct = case.get("category", "") in acceptable
     escalation_correct = bool(case.get("escalated")) == bool(expected.get("should_escalate"))
 
     return {

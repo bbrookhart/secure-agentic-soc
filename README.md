@@ -15,7 +15,7 @@ or reach a capability it was never granted.
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Supervisor-1C3C3C?style=flat-square)](https://langchain-ai.github.io/langgraph/)
 [![Ollama](https://img.shields.io/badge/Ollama-Local_Inference-000000?style=flat-square&logo=ollama&logoColor=white)](https://ollama.com)
-[![Tests](https://img.shields.io/badge/tests-469_passing-3FB950?style=flat-square)](tests/)
+[![Tests](https://img.shields.io/badge/tests-481_passing-3FB950?style=flat-square)](tests/)
 [![Type checked](https://img.shields.io/badge/mypy-strict-2A6DB0?style=flat-square)](pyproject.toml)
 
 [![Local first](https://img.shields.io/badge/🔒_Local_first-no_data_egress-0969DA?style=flat-square)](#security-controls)
@@ -66,11 +66,13 @@ This project is an answer to those four problems.
 <tr><td>Which agent runs next</td><td><b>🔒 Deterministic router</b></td></tr>
 <tr><td>Whether a human must approve</td><td><b>🔒 Deterministic policy engine</b></td></tr>
 <tr><td>Whether a principal may call a tool</td><td><b>🔒 Broker + identity registry</b></td></tr>
-<tr><td>Severity, category, correlation, narrative</td><td>🤖 LLM</td></tr>
+<tr><td>Severity and category <sub>(the verdict)</sub></td><td><b>🔒 Rule-based classifier</b> <sub>— unless a model has been <a href="#earning-the-verdict">measured</a> to beat it</sub></td></tr>
+<tr><td>Analysis, correlation, narrative</td><td>🤖 LLM</td></tr>
 </table>
 
-The LLM *is* asked what the next step should be. Its answer is recorded and compared against
-the router's — and when they disagree, the disagreement is logged as an **override**:
+The LLM *is* asked what the next step should be, and what the verdict should be. Both
+answers are recorded and compared against the deterministic component's — and when they
+disagree, the disagreement is logged as an **override**:
 
 ```mermaid
 flowchart LR
@@ -620,8 +622,15 @@ Three labelling decisions keep the suite from grading itself:
 
 Current deterministic baseline over **41 cases**: **all invariants hold**, severity in band
 **93% ±8%** with **7%** under-called and **0%** over-called, category accuracy
-**66% ±14%**, escalation precision **97%**, ATT&CK mappings **67%** clean, and injection
-containment **100%**.
+**83% ±11%** (66% on the strict primary-only reading), escalation precision **97%**, ATT&CK
+mappings **67%** clean, and injection containment **100%**.
+
+Category is now scored the way severity always was — against a primary answer plus any
+alternatives a competent analyst could defend. Eleven contentless service-desk injection
+alerts are genuinely both `unknown` and `benign_or_false_positive`, and the classifier itself
+splits between the two across near-identical cases. The lenient rise from 66% is a
+**labelling-convention fix, not better classification**; the strict number is printed beside
+it so the harder reading stays visible.
 
 Those aggregates are *lower* than the previous 38-case run, and the paired test says why:
 **identical on all 38 shared cases**. The three added cases are multi-host investigation
@@ -665,6 +674,65 @@ actually reach:
 | `mitre` — a tampered ATT&CK description | 1 | 100% | 100% |
 | `logs` — a hostile log line | 1 | 100% | 100% |
 | `case_history` — a prior alert title | — | no coverage | — |
+
+### Earning the verdict
+
+Severity and category drive the approval gate, so who decides them is the most consequential
+question in the system. It is settled by measurement rather than by architecture taste.
+
+Paired against the deterministic floor over the same corpus:
+
+| | rules | llama3.2 | |
+|:--|--:|--:|:--|
+| Category correct | **68%** | 39% | *p = 0.035* |
+| Severity in band | **93%** | 79% | *p = 0.039* |
+| Escalation correct | **97%** | 74% | *p = 0.004* |
+| Missed escalations | **2** | 4 | two of them real attacks |
+
+Every difference is statistically resolved and every one favours the rules. The model
+under-calls severity to `medium`, so `HITL-001` never fires and a genuine incident completes
+without a human ever seeing it.
+
+With the verdict withheld, the LLM path becomes **identical to the deterministic path on all
+41 cases** — same severity, same category, same escalations. Missed escalations fall from
+four to two, injection containment returns to 100%, and the security invariants hold:
+
+| | model deciding | model advising |
+|:--|--:|--:|
+| Severity in band | 79% | **93%** |
+| Category correct | 39% | **83%** |
+| Missed escalations | 4 | **2** |
+| Injection containment | 94% | **100%** |
+| Invariants | breached | **all held** |
+
+The model still runs, still costs 41s a case, and still writes every word of the analysis.
+It just no longer decides what the alert *is*.
+
+So triage now works the way routing always has: **the model proposes, the classifier decides,
+and the disagreement is audited.**
+
+```
+LLM advisor OVERRIDDEN: proposed 'medium'/'unknown',
+                        classifier held 'high'/'lateral_movement'
+```
+
+That is `TP-006`, a real lateral-movement case. The model's answer would have missed the
+escalation; the classifier's did not.
+
+The model keeps everything it is actually good at — the rationale, the observations, the
+recommended next step, the hunt narrative. Only the verdict is withheld, and only until a
+model earns it:
+
+```bash
+make baseline-llm NAME=<model>
+make eval-paired A=evals/baselines/offline.json B=evals/baselines/llm-<model>.json
+# beats the floor on category and severity, adds no missed escalations?
+SOC_MODEL_VERDICT_AUTHORITY=true
+```
+
+A model that merely *ties* has not earned it: the rules are cheaper, reproducible, and
+cannot be talked into anything. `make eval --llm` reports what the overruled model would
+have scored, so the decision is a reading rather than an argument.
 
 ### It investigates, it does not just classify
 

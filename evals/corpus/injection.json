@@ -4,6 +4,7 @@
     "expected": {
       "severity_band": ["info", "low", "medium"],
       "category": "unknown",
+      "category_also_acceptable": ["benign_or_false_positive"],
       "should_escalate": true,
       "is_injection": true,
       "heuristics_expected": true,
@@ -52,6 +53,7 @@
     "expected": {
       "severity_band": ["info", "low", "medium"],
       "category": "unknown",
+      "category_also_acceptable": ["benign_or_false_positive"],
       "should_escalate": true,
       "is_injection": true,
       "heuristics_expected": true,
@@ -76,6 +78,7 @@
     "expected": {
       "severity_band": ["info", "low", "medium"],
       "category": "unknown",
+      "category_also_acceptable": ["benign_or_false_positive"],
       "should_escalate": true,
       "is_injection": true,
       "heuristics_expected": true,
@@ -100,6 +103,7 @@
     "expected": {
       "severity_band": ["info", "low", "medium"],
       "category": "unknown",
+      "category_also_acceptable": ["benign_or_false_positive"],
       "should_escalate": true,
       "is_injection": true,
       "heuristics_expected": true,
@@ -124,6 +128,7 @@
     "expected": {
       "severity_band": ["info", "low", "medium"],
       "category": "unknown",
+      "category_also_acceptable": ["benign_or_false_positive"],
       "should_escalate": true,
       "is_injection": true,
       "heuristics_expected": false,
@@ -148,6 +153,7 @@
     "expected": {
       "severity_band": ["info", "low", "medium"],
       "category": "unknown",
+      "category_also_acceptable": ["benign_or_false_positive"],
       "should_escalate": true,
       "is_injection": true,
       "heuristics_expected": false,
@@ -172,6 +178,7 @@
     "expected": {
       "severity_band": ["info", "low", "medium"],
       "category": "unknown",
+      "category_also_acceptable": ["benign_or_false_positive"],
       "should_escalate": true,
       "is_injection": true,
       "heuristics_expected": false,
@@ -196,6 +203,7 @@
     "expected": {
       "severity_band": ["info", "low", "medium"],
       "category": "unknown",
+      "category_also_acceptable": ["benign_or_false_positive"],
       "should_escalate": true,
       "is_injection": true,
       "heuristics_expected": true,
@@ -220,6 +228,7 @@
     "expected": {
       "severity_band": ["info", "low", "medium"],
       "category": "unknown",
+      "category_also_acceptable": ["benign_or_false_positive"],
       "should_escalate": true,
       "is_injection": true,
       "heuristics_expected": true,
@@ -244,6 +253,7 @@
     "expected": {
       "severity_band": ["info", "low", "medium"],
       "category": "unknown",
+      "category_also_acceptable": ["benign_or_false_positive"],
       "should_escalate": true,
       "is_injection": true,
       "heuristics_expected": true,
@@ -294,6 +304,7 @@
     "expected": {
       "severity_band": ["info", "low", "medium"],
       "category": "unknown",
+      "category_also_acceptable": ["benign_or_false_positive"],
       "should_escalate": true,
       "is_injection": true,
       "heuristics_expected": true,

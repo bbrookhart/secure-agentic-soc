@@ -219,6 +219,13 @@ class TriageResult(BaseModel):
         description="Candidate ATT&CK technique IDs for the hunter to verify.",
     )
     recommended_next_step: str = ""
+    #: What the model proposed, when it did not hold verdict authority.
+    #:
+    #: Kept so the promotion question -- "would this model have done better?" --
+    #: is answered by reading the corpus rather than by argument. Absent when
+    #: the model decided, or when there was no model.
+    advisory_severity: Severity | None = None
+    advisory_category: AlertCategory | None = None
     # Raised when the alert's own text tripped the injection heuristics.  The
     # alert is attacker-influenced in exactly the way a log line is, so a flag
     # here must reach the policy engine even on runs that skip enrichment.

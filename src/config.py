@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     # minutes rather than tens of minutes; when on, only the roles that
     # benefit use it (triage and enrichment).
     llm_reasoning: bool = Field(default=False)
+    #: Whether the model's severity and category may *decide* the verdict.
+    #:
+    #: Off by default because the corpus says so, not on principle. Paired
+    #: against the deterministic floor, llama3.2 scores 39% category against
+    #: 68% and 79% severity-in-band against 93%, and causes four missed
+    #: escalations against two -- all resolved at p<0.05. A model that beats
+    #: the floor can be promoted; see src/model_profiles.py for the procedure.
+    model_verdict_authority: bool = Field(default=False)
     # A model tag is mutable: "llama3.2" re-pulled can be different weights
     # with different judgement, and nothing would notice. Pin the digest and
     # a mismatch is refused; leave it unset and the observed digest is still

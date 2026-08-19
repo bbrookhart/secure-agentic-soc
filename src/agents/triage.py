@@ -36,6 +36,7 @@ from src.agents.base import (
 from src.agents.coercion import enum_coercer
 from src.enums import AgentRole, AlertCategory, AuditAction, Severity
 from src.llm import structured_completion
+from src.model_profiles import profile_for
 from src.observability import metrics
 from src.prompts import TRIAGE as _TRIAGE
 from src.prompts import with_preamble
@@ -273,6 +274,69 @@ def run_triage(alert: SecurityAlert, context: AgentContext) -> tuple[TriageResul
         severity = llm.severity
         adjustment_note = ""
 
+        # --- Does this model get to decide, or only to propose? ------------
+        # Routing has always worked this way: the model advises, the
+        # deterministic component decides, and the disagreement is audited.
+        # Triage was the one place the model still held the verdict, and the
+        # corpus says it should not -- llama3.2 scores 39% category against the
+        # classifier's 68% and misses four escalations against two. Authority
+        # is therefore something a model earns by beating the floor on a paired
+        # run; see src/model_profiles.py for the procedure.
+        authoritative = profile_for(AgentRole.TRIAGE).verdict_authority
+        advisory_severity = None if authoritative else llm.severity
+        advisory_category = None if authoritative else llm.category
+        if not authoritative:
+            agreed = (
+                llm.severity is baseline_severity and llm.category is baseline_category
+            )
+            events.append(
+                context.log(
+                    AuditAction.POLICY_EVALUATED,
+                    (
+                        f"LLM advisor agreed: {baseline_severity.value}/"
+                        f"{baseline_category.value}"
+                        if agreed
+                        else f"LLM advisor OVERRIDDEN: proposed "
+                        f"'{llm.severity.value}'/'{llm.category.value}', classifier held "
+                        f"'{baseline_severity.value}'/'{baseline_category.value}'"
+                    ),
+                    {
+                        "advisory_severity": llm.severity.value,
+                        "advisory_category": llm.category.value,
+                        "authoritative_severity": baseline_severity.value,
+                        "authoritative_category": baseline_category.value,
+                        "agreed": agreed,
+                        "reason": "model does not hold verdict authority on this deployment",
+                    },
+                    success=agreed,
+                )
+            )
+            # The narrative is kept -- rationale, observations and the suggested
+            # next step are the work no rule set produces, and the reason to run
+            # a model at all. Only the verdict is withheld.
+            #
+            # Confidence is part of the verdict, not commentary on it. Leaving
+            # it with the model was measured to be a hole in exactly this
+            # control: rule R-020 skips enrichment entirely for a *confidently*
+            # benign alert, so a model with no say over severity or category
+            # could still decide an alert was not worth investigating. GEN-001
+            # ran zero evidence-gathering rounds on the LLM path and three
+            # offline, purely because the model said 0.8 where the classifier
+            # says at most 0.6.
+            #
+            # It is also the model's least reliable output. On this corpus its
+            # 0.8-1.0 bucket is right 56% of the time while its 0.2-0.4 bucket
+            # is right 86% -- inverted, so high confidence actively predicts
+            # being wrong.
+            severity = baseline_severity
+            llm = llm.model_copy(
+                update={
+                    "severity": baseline_severity,
+                    "category": baseline_category,
+                    "confidence": min(baseline_confidence, 0.6),
+                }
+            )
+
         # Guardrail: the model may not downgrade below a deterministic
         # assessment that rested on strong aggravating evidence.
         aggravating = float(baseline.get("scores", {}).get("aggravating", 0.0))
@@ -309,6 +373,8 @@ def run_triage(alert: SecurityAlert, context: AgentContext) -> tuple[TriageResul
                 llm.suggested_techniques or list(baseline.get("suggested_techniques", []))
             ),
             recommended_next_step=llm.recommended_next_step[:400],
+            advisory_severity=advisory_severity,
+            advisory_category=advisory_category,
             untrusted_content_flagged=bool(alert_flags),
             injection_flags=alert_flags,
             analysis_limits=analysis_limits,
